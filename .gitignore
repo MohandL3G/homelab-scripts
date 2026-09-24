@@ -1,0 +1,19 @@
+# Environment / secrets — never commit these
+.env
+.env.*
+
+# Logs & backups
+*.log
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
