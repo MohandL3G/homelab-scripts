@@ -27,8 +27,11 @@
 # It NEVER touches application/data directories (e.g. /opt/immich/cache/clip).
 #
 # Output: clears the terminal when stdout is a TTY (never when piped/redirected),
-# then prints a "=== LXC cache cleanup — <timestamp> ===" run header, followed by
-# the per-CT report.
+# then prints a "=== LXC cache cleanup — <timestamp> ===" run header, then the
+# per-CT report streaming live as each CT is processed, then a "Summary" table
+# (CTID / Name / Found / Before / After / Freed / Status) plus a
+# "Total reclaimed: ... across N CTs   Elapsed: Nm Ns" footer closes the run.
+# Free sizes come from `df -Pk /` inside each CT, POSIX so Alpine busybox is OK.
 #
 set -uo pipefail
 
@@ -67,24 +70,77 @@ DETECT='
   [ "${#found[@]}" -eq 0 ] && echo NONE || echo "${found[*]}"
 '
 
+# host-side helpers for the summary table
+
+# Append one summary row. "-" in a numeric field means "not measured".
+sum_row() {
+  SUM_CTID+=("$1"); SUM_NAME+=("$2"); SUM_FOUND+=("$3"); SUM_BEFORE+=("$4")
+  SUM_AFTER+=("$5"); SUM_FREED+=("$6"); SUM_STATUS+=("$7")
+}
+
+# df -Pk / inside a CT -> "<capacity> <used_kb>"; empty on failure.
+# Both numbers come from ONE pct exec. -P/-k are POSIX, so Alpine busybox is fine.
+df_used() {
+  pct exec "$1" -- df -Pk / 2>/dev/null | awk 'NR==2{print $5, $3}'
+}
+
+# KB -> B/KB/MB/GB, one decimal where useful. Negative (CT grew) reads as 0 B.
+human_kb() {
+  awk -v k="${1:-0}" 'BEGIN{
+    if      (k <= 0)         { printf "0 B\n" }
+    else if (k < 1024)       { printf "%.0f KB\n", k }
+    else if (k < 1048576)    { printf "%.1f MB\n", k/1024 }
+    else                     { printf "%.1f GB\n", k/1048576 }
+  }'
+}
+
+SUM_CTID=(); SUM_NAME=(); SUM_FOUND=(); SUM_BEFORE=(); SUM_AFTER=()
+SUM_FREED=(); SUM_STATUS=()
+TOTAL_FREED_KB=0
+T0=$SECONDS
+
 for v in "${CTLIST[@]}"; do
-  pct status "$v" >/dev/null 2>&1 || { echo "== CT $v skipped (stopped) =="; continue; }
+  # hostname is readable on a stopped CT too, so skipped rows still get a name
+  cname=$(pct config "$v" 2>/dev/null | awk -F': ' '/^hostname/{print $2; exit}')
+  [ -n "$cname" ] || cname='-'
+
+  if ! pct status "$v" >/dev/null 2>&1; then
+    echo "== CT $v skipped (stopped) =="
+    sum_row "$v" "$cname" '-' '-' '-' '-' 'skipped (stopped)'
+    continue
+  fi
   echo "== CT $v =="
 
   found=$(pct exec "$v" -- bash -c "$DETECT")
 
+  if [ -z "$found" ]; then
+    echo "   error: pct exec returned nothing (CT unreachable?)"
+    sum_row "$v" "$cname" '-' '-' '-' '-' 'error'
+    continue
+  fi
+
   if [ "$found" = "NONE" ]; then
     echo "   nothing to clean (no pnpm/npm/uv/apt-get found)"
+    sum_row "$v" "$cname" 'none' '-' '-' '-' 'nothing to clean'
     continue
   fi
   echo "   found: $found"
 
+  usage=$(df_used "$v")
+  if [ -z "$usage" ]; then
+    echo "   error: could not read df -Pk /"
+    sum_row "$v" "$cname" "$found" '-' '-' '-' 'error'
+    continue
+  fi
+  b_pct=${usage%% *}
+  b_kb=${usage##* }
+
   if [ $DRY -eq 1 ]; then
-    pct exec "$v" -- df -h / | awk 'NR==2{printf "   (dry) would prune; currently used: %s\n",$5}'
+    printf '   (dry) would prune; currently used: %s\n' "$b_pct"
+    sum_row "$v" "$cname" "$found" "$b_pct" '-' '-' 'dry-run'
     continue
   fi
 
-  used_before=$(pct exec "$v" -- df -h / | awk 'NR==2{print $5}')
   pct exec "$v" -- bash -s <<'REMOTE'
     is(){ command -v "$1" >/dev/null 2>&1; }
     is pnpm && pnpm store prune 2>/dev/null || true
@@ -95,8 +151,69 @@ for v in "${CTLIST[@]}"; do
     [ -d /usr/local/share/.cache/yarn ] && rm -rf /usr/local/share/.cache/yarn
     { command -v apt-get >/dev/null 2>&1 && [ -d /var/cache/apt/archives ]; } && apt-get clean 2>/dev/null
 REMOTE
-  used_after=$(pct exec "$v" -- df -h / | awk 'NR==2{print $5}')
-  echo "   used: $used_before -> $used_after"
+
+  usage=$(df_used "$v")
+  if [ -z "$usage" ]; then
+    echo "   used: $b_pct -> ?"
+    sum_row "$v" "$cname" "$found" "$b_pct" '-' '-' 'error'
+    continue
+  fi
+  a_pct=${usage%% *}
+  a_kb=${usage##* }
+  echo "   used: $b_pct -> $a_pct"
+
+  # clamp: a CT that grew during the run must never report negative gains
+  freed=$(( b_kb - a_kb ))
+  pts=$(( ${b_pct%\%} - ${a_pct%\%} ))
+  [ "$freed" -lt 0 ] && freed=0
+  [ "$pts" -lt 0 ] && pts=0
+
+  if [ "$freed" -gt 0 ]; then
+    status='OK'
+    TOTAL_FREED_KB=$(( TOTAL_FREED_KB + freed ))
+  else
+    status='no change'
+  fi
+  sum_row "$v" "$cname" "$found" "$b_pct" "$a_pct" "$(human_kb "$freed") ($pts%)" "$status"
 done
 
-echo "Done."
+# ---- summary table (one row per CT, skipped ones included) ----
+
+if [ "${#SUM_CTID[@]}" -eq 0 ]; then
+  echo "Done."
+  exit 0
+fi
+
+# widen the two variable columns to the data, never below their header
+name_w=4
+found_w=5
+for i in "${!SUM_CTID[@]}"; do
+  [ "${#SUM_NAME[i]}"  -gt "$name_w" ]  && name_w="${#SUM_NAME[i]}"
+  [ "${#SUM_FOUND[i]}" -gt "$found_w" ] && found_w="${#SUM_FOUND[i]}"
+done
+
+row() { printf '%-4s  %-*s  %-*s  %-6s  %-5s  %-17s  %s\n' \
+        "$1" "$name_w" "$2" "$found_w" "$3" "$4" "$5" "$6" "$7"; }
+
+echo
+if [ $DRY -eq 1 ]; then
+  echo "Summary (dry run — no changes made)"
+else
+  echo "Summary"
+fi
+row CTID Name Found Before After Freed Status
+for i in "${!SUM_CTID[@]}"; do
+  row "${SUM_CTID[i]}" "${SUM_NAME[i]}" "${SUM_FOUND[i]}" "${SUM_BEFORE[i]}" \
+      "${SUM_AFTER[i]}" "${SUM_FREED[i]}" "${SUM_STATUS[i]}"
+done
+
+echo
+elapsed=$(( SECONDS - T0 ))
+if [ $DRY -eq 1 ]; then
+  printf 'Elapsed: %dm %ds\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+else
+  printf 'Total reclaimed: %s across %d CTs   Elapsed: %dm %ds\n' \
+    "$(human_kb "$TOTAL_FREED_KB")" "${#SUM_CTID[@]}" \
+    "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+fi
+
