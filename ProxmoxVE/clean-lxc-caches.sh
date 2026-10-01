@@ -8,7 +8,11 @@
 #   dry run:  bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)" _ --dry
 #   real run: bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)"
 #
-# The leading "_" is a throwaway $0 so "--dry" lands in $1.
+# Options (in any order, both optional):
+#   --dry       report only, change nothing
+#   --verbose   also stream the per-CT detail as each CT is processed
+#
+# The leading "_" is a throwaway $0 so the options land in $1.
 #
 # Fully auto-discovering, no hardcoded CT IDs and no per-host branching:
 #   - Targets EVERY currently-running CT on whatever Proxmox host this runs
@@ -27,16 +31,35 @@
 # It NEVER touches application/data directories (e.g. /opt/immich/cache/clip).
 #
 # Output: clears the terminal when stdout is a TTY (never when piped/redirected),
-# then prints a "=== LXC cache cleanup — <timestamp> ===" run header, then the
-# per-CT report streaming live as each CT is processed, then a "Summary" table
-# (CTID / Name / Found / Before / After / Freed / Status) plus a
+# then prints a "=== LXC cache cleanup — <timestamp> ===" run header, then a
+# "Summary" table (CTID / Name / Found / Before / After / Freed / Status) plus a
 # "Total reclaimed: ... across N CTs   Elapsed: Nm Ns" footer closes the run.
+# By default that is ALL you get — the per-CT detail (what was found, before ->
+# after usage) is behind --verbose. On a TTY the run is not silent: a single
+# transient line shows which CT is being cleaned and is erased before the table.
 # Free sizes come from `df -Pk /` inside each CT, POSIX so Alpine busybox is OK.
 #
 set -uo pipefail
 
 DRY=0
-[ "${1:-}" = "--dry" ] && DRY=1
+VERBOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry)     DRY=1 ;;
+    --verbose) VERBOSE=1 ;;
+    -h|--help)
+      echo "usage: clean-lxc-caches.sh [--dry] [--verbose]"
+      echo "  --dry       report only, change nothing"
+      echo "  --verbose   also stream per-CT detail while running"
+      exit 0
+      ;;
+    *)
+      echo "clean-lxc-caches.sh: unknown option: $arg" >&2
+      echo "usage: clean-lxc-caches.sh [--dry] [--verbose]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Clear the screen first, but ONLY on a real TTY so piped/redirected logs stay
 # escape-free. Let terminfo pick the sequence (`tput`, then `clear`), and fall
@@ -80,6 +103,33 @@ DETECT='
 
 # host-side helpers for the summary table
 
+# Per-CT detail: printed only in --verbose mode, dropped otherwise. Everything
+# still gets measured and recorded either way, so the table is identical.
+# Named `say` because the per-CT loop below uses `v` as its loop variable.
+say() { [ "$VERBOSE" -eq 1 ] && printf '%s\n' "$*"; return 0; }
+
+# Transient progress line, TTY and non-verbose only. Rewritten in place with
+# \r + erase-to-EOL, and cleared before the table so it leaves no trace.
+PROGRESS=0
+[ -t 1 ] && [ "$VERBOSE" -eq 0 ] && PROGRESS=1
+progress() { [ "$PROGRESS" -eq 1 ] && printf '\r\033[KCleaning CT %s (%d/%d)...' "$1" "$2" "$3"; return 0; }
+progress_clear() { [ "$PROGRESS" -eq 1 ] && printf '\r\033[K'; return 0; }
+
+# Run the in-CT cleanup. Output is swallowed by the caller unless --verbose; the
+# body already silences each command, so this only stops unexpected chatter.
+cleanup_ct() {
+  pct exec "$1" -- bash -s <<'REMOTE'
+    is(){ command -v "$1" >/dev/null 2>&1; }
+    is pnpm && pnpm store prune 2>/dev/null || true
+    is npm  && npm cache clean --force 2>/dev/null || true
+    is uv   && uv cache clean 2>/dev/null || true
+    [ -d /root/.cache/pnpm ]            && rm -rf /root/.cache/pnpm
+    [ -d /root/.npm/_cacache ]          && rm -rf /root/.npm/_cacache
+    [ -d /usr/local/share/.cache/yarn ] && rm -rf /usr/local/share/.cache/yarn
+    { command -v apt-get >/dev/null 2>&1 && [ -d /var/cache/apt/archives ]; } && apt-get clean 2>/dev/null
+REMOTE
+}
+
 # Append one summary row. "-" in a numeric field means "not measured".
 sum_row() {
   SUM_CTID+=("$1"); SUM_NAME+=("$2"); SUM_FOUND+=("$3"); SUM_BEFORE+=("$4")
@@ -106,37 +156,42 @@ SUM_CTID=(); SUM_NAME=(); SUM_FOUND=(); SUM_BEFORE=(); SUM_AFTER=()
 SUM_FREED=(); SUM_STATUS=()
 TOTAL_FREED_KB=0
 T0=$SECONDS
+NCT=${#CTLIST[@]}
+IDX=0
 
 for v in "${CTLIST[@]}"; do
+  IDX=$(( IDX + 1 ))
+  progress "$v" "$IDX" "$NCT"
+
   # hostname is readable on a stopped CT too, so skipped rows still get a name
   cname=$(pct config "$v" 2>/dev/null | awk -F': ' '/^hostname/{print $2; exit}')
   [ -n "$cname" ] || cname='-'
 
   if ! pct status "$v" >/dev/null 2>&1; then
-    echo "== CT $v skipped (stopped) =="
+    say "== CT $v skipped (stopped) =="
     sum_row "$v" "$cname" '-' '-' '-' '-' 'skipped (stopped)'
     continue
   fi
-  echo "== CT $v =="
+  say "== CT $v =="
 
   found=$(pct exec "$v" -- bash -c "$DETECT")
 
   if [ -z "$found" ]; then
-    echo "   error: pct exec returned nothing (CT unreachable?)"
+    say "   error: pct exec returned nothing (CT unreachable?)"
     sum_row "$v" "$cname" '-' '-' '-' '-' 'error'
     continue
   fi
 
   if [ "$found" = "NONE" ]; then
-    echo "   nothing to clean (no pnpm/npm/uv/apt-get found)"
+    say "   nothing to clean (no pnpm/npm/uv/apt-get found)"
     sum_row "$v" "$cname" 'none' '-' '-' '-' 'nothing to clean'
     continue
   fi
-  echo "   found: $found"
+  say "   found: $found"
 
   usage=$(df_used "$v")
   if [ -z "$usage" ]; then
-    echo "   error: could not read df -Pk /"
+    say "   error: could not read df -Pk /"
     sum_row "$v" "$cname" "$found" '-' '-' '-' 'error'
     continue
   fi
@@ -144,31 +199,32 @@ for v in "${CTLIST[@]}"; do
   b_kb=${usage##* }
 
   if [ $DRY -eq 1 ]; then
-    printf '   (dry) would prune; currently used: %s\n' "$b_pct"
+    say "   (dry) would prune; currently used: $b_pct"
     sum_row "$v" "$cname" "$found" "$b_pct" '-' '-' 'dry-run'
     continue
   fi
 
-  pct exec "$v" -- bash -s <<'REMOTE'
-    is(){ command -v "$1" >/dev/null 2>&1; }
-    is pnpm && pnpm store prune 2>/dev/null || true
-    is npm  && npm cache clean --force 2>/dev/null || true
-    is uv   && uv cache clean 2>/dev/null || true
-    [ -d /root/.cache/pnpm ]            && rm -rf /root/.cache/pnpm
-    [ -d /root/.npm/_cacache ]          && rm -rf /root/.npm/_cacache
-    [ -d /usr/local/share/.cache/yarn ] && rm -rf /usr/local/share/.cache/yarn
-    { command -v apt-get >/dev/null 2>&1 && [ -d /var/cache/apt/archives ]; } && apt-get clean 2>/dev/null
-REMOTE
+  # Swallow whatever the cleanup prints by default, but the status is only ever
+  # logged, never acted on: a package manager returning non-zero for its own
+  # reasons must not turn an otherwise-fine CT into an `error` row. The row's
+  # health comes from the df read either side, as before.
+  cleanup_rc=0
+  if [ "$VERBOSE" -eq 1 ]; then
+    cleanup_ct "$v" || cleanup_rc=$?
+  else
+    cleanup_ct "$v" >/dev/null 2>&1 || cleanup_rc=$?
+  fi
+  [ "$cleanup_rc" -eq 0 ] || say "   (pct exec exited $cleanup_rc; ignoring)"
 
   usage=$(df_used "$v")
   if [ -z "$usage" ]; then
-    echo "   used: $b_pct -> ?"
+    say "   used: $b_pct -> ?"
     sum_row "$v" "$cname" "$found" "$b_pct" '-' '-' 'error'
     continue
   fi
   a_pct=${usage%% *}
   a_kb=${usage##* }
-  echo "   used: $b_pct -> $a_pct"
+  say "   used: $b_pct -> $a_pct"
 
   # clamp: a CT that grew during the run must never report negative gains
   freed=$(( b_kb - a_kb ))
@@ -202,6 +258,9 @@ done
 
 row() { printf '%-4s  %-*s  %-*s  %-6s  %-5s  %-17s  %s\n' \
         "$1" "$name_w" "$2" "$found_w" "$3" "$4" "$5" "$6" "$7"; }
+
+# Wipe the progress line before the table, so the final screen is clean.
+progress_clear
 
 echo
 if [ $DRY -eq 1 ]; then
