@@ -248,16 +248,50 @@ if [ "${#SUM_CTID[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# widen the two variable columns to the data, never below their header
-name_w=4
-found_w=5
+# Column widths, measured from the header AND every cell, so a long CT name or a
+# long tool list can never run into its neighbour and every rule ends up the same
+# length. Seeded at the header lengths so an empty table still renders.
+ctid_w=4; name_w=4; found_w=5; before_w=6; after_w=5; freed_w=5; status_w=6
 for i in "${!SUM_CTID[@]}"; do
-  [ "${#SUM_NAME[i]}"  -gt "$name_w" ]  && name_w="${#SUM_NAME[i]}"
-  [ "${#SUM_FOUND[i]}" -gt "$found_w" ] && found_w="${#SUM_FOUND[i]}"
+  [ "${#SUM_CTID[i]}"   -gt "$ctid_w" ]   && ctid_w="${#SUM_CTID[i]}"
+  [ "${#SUM_NAME[i]}"   -gt "$name_w" ]   && name_w="${#SUM_NAME[i]}"
+  [ "${#SUM_FOUND[i]}"  -gt "$found_w" ]  && found_w="${#SUM_FOUND[i]}"
+  [ "${#SUM_BEFORE[i]}" -gt "$before_w" ] && before_w="${#SUM_BEFORE[i]}"
+  [ "${#SUM_AFTER[i]}"  -gt "$after_w" ]  && after_w="${#SUM_AFTER[i]}"
+  [ "${#SUM_FREED[i]}"  -gt "$freed_w" ]  && freed_w="${#SUM_FREED[i]}"
+  [ "${#SUM_STATUS[i]}" -gt "$status_w" ] && status_w="${#SUM_STATUS[i]}"
 done
 
-row() { printf '%-4s  %-*s  %-*s  %-6s  %-5s  %-17s  %s\n' \
-        "$1" "$name_w" "$2" "$found_w" "$3" "$4" "$5" "$6" "$7"; }
+# One space of padding either side of every cell. The label-ish columns read
+# left-aligned, the numeric ones right-aligned so magnitudes line up.
+pad() {
+  case "$2" in
+    r) printf '%*s'   "$1" "$3" ;;
+    *) printf '%-*s'  "$1" "$3" ;;
+  esac
+}
+
+row() {
+  printf '| %s | %s | %s | %s | %s | %s | %s |\n' \
+    "$(pad "$ctid_w"   l "$1")" "$(pad "$name_w"   l "$2")" \
+    "$(pad "$found_w"  l "$3")" "$(pad "$before_w" r "$4")" \
+    "$(pad "$after_w"  r "$5")" "$(pad "$freed_w"  r "$6")" \
+    "$(pad "$status_w" l "$7")"
+}
+
+# Horizontal rule with '+' at every column junction: '=' for the heavy rules
+# framing the header and the table, '-' for the light ones between data rows.
+# Each segment is the column width plus its one space of padding either side,
+# which is what keeps a rule exactly as wide as the rows it separates.
+rule() {
+  local fill='-' seg line='+' w
+  [ "$1" = heavy ] && fill='='
+  for w in "$ctid_w" "$name_w" "$found_w" "$before_w" "$after_w" "$freed_w" "$status_w"; do
+    seg=$(printf "%$(( w + 2 ))s" '')
+    line="$line${seg// /$fill}+"
+  done
+  printf '%s\n' "$line"
+}
 
 # Wipe the progress line before the table, so the final screen is clean.
 progress_clear
@@ -268,13 +302,19 @@ if [ $DRY -eq 1 ]; then
 else
   echo "Summary"
 fi
+rule heavy
 row CTID Name Found Before After Freed Status
-for i in "${!SUM_CTID[@]}"; do
+rule heavy
+n=${#SUM_CTID[@]}
+i=0
+while [ "$i" -lt "$n" ]; do
   row "${SUM_CTID[i]}" "${SUM_NAME[i]}" "${SUM_FOUND[i]}" "${SUM_BEFORE[i]}" \
       "${SUM_AFTER[i]}" "${SUM_FREED[i]}" "${SUM_STATUS[i]}"
+  i=$(( i + 1 ))
+  [ "$i" -lt "$n" ] && rule light
 done
+rule heavy
 
-echo
 elapsed=$(( SECONDS - T0 ))
 if [ $DRY -eq 1 ]; then
   printf 'Elapsed: %dm %ds\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
