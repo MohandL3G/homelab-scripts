@@ -26,10 +26,26 @@
 #
 # It NEVER touches application/data directories (e.g. /opt/immich/cache/clip).
 #
+# Output: clears the terminal when stdout is a TTY (never when piped/redirected),
+# then prints a "=== LXC cache cleanup — <timestamp> ===" run header, followed by
+# the per-CT report.
+#
 set -uo pipefail
 
 DRY=0
 [ "${1:-}" = "--dry" ] && DRY=1
+
+# Clear the screen first, but ONLY on a real TTY so piped/redirected logs stay
+# escape-free. \033[H\033[2J homes + clears, \033[3J also wipes the scrollback.
+[ -t 1 ] && printf '\033[H\033[2J\033[3J'
+
+# Run header, so a saved log is never mistaken for a live run.
+NOW=$(date '+%Y-%m-%d %H:%M:%S')
+if [ $DRY -eq 1 ]; then
+  printf '=== LXC cache cleanup (DRY RUN — nothing will be changed) — %s ===\n\n' "$NOW"
+else
+  printf '=== LXC cache cleanup — %s ===\n\n' "$NOW"
+fi
 
 mapfile -t CTLIST < <(pct list 2>/dev/null | awk 'NR>1 && $2=="running"{print $1}')
 

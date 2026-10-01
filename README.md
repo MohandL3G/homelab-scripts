@@ -47,6 +47,11 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-script
 
 The leading `_` is a throwaway `$0` so `--dry` lands in `$1`.
 
+Before reporting anything it clears the terminal - but only when stdout is a
+real TTY, so `| tee` / `> run.log` stays free of escape codes - and prints a
+`=== LXC cache cleanup - <timestamp> ===` run header (a `DRY RUN` variant with
+`--dry`) so a saved log can never be mistaken for a live run.
+
 **Safety rules baked in:**
 - Never `rm -rf` the pnpm store (hardlinked into live `node_modules`) - only `pnpm store prune`.
 - Never touches app/data dirs (e.g. `/opt/immich/cache/clip`) - caches only.
