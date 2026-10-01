@@ -43,17 +43,34 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-script
 
 # real run
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)"
+
+# real run, streaming the per-CT detail too
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)" _ --verbose
 ```
 
-The leading `_` is a throwaway `$0` so `--dry` lands in `$1`.
+The leading `_` is a throwaway `$0` so the options land in `$1`. `--dry` and
+`--verbose` may be given in either order; an unknown option exits 2.
 
 Before reporting anything it clears the terminal - but only when stdout is a
 real TTY, so `| tee` / `> run.log` stays free of escape codes - and prints a
 `=== LXC cache cleanup - <timestamp> ===` run header (a `DRY RUN` variant with
 `--dry`) so a saved log can never be mistaken for a live run.
 
-The per-CT report streams live while the run is in progress, then a **summary
-table** closes it out:
+Output is summary-only by default - the header, the table below, and the footer.
+The per-CT detail (what each CT had installed, `before -> after` usage) is behind
+`--verbose`, which restores it as a live stream while the run is in progress:
+
+```
+Cleaning CT 101 (1/6)...   <- only on a TTY, rewritten in place and erased
+                            before the table, never when piped/redirected
+```
+
+Without `--verbose` a non-TTY run prints nothing but the header, table and
+footer, and the `pct exec` cleanup chatter is discarded (its exit status is
+ignored either way, so a chatty package manager cannot turn a healthy CT into an
+`error` row).
+
+The **summary table** closes the run out:
 
 ```
 Summary
