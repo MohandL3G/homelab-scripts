@@ -52,6 +52,26 @@ real TTY, so `| tee` / `> run.log` stays free of escape codes - and prints a
 `=== LXC cache cleanup - <timestamp> ===` run header (a `DRY RUN` variant with
 `--dry`) so a saved log can never be mistaken for a live run.
 
+The per-CT report streams live while the run is in progress, then a **summary
+table** closes it out:
+
+```
+Summary
+CTID  Name                 Found    Before  After  Freed          Status
+100   immich               apt npm  14%     13%    208.0 MB (1%)  OK
+102   a-very-long-ct-name  apt      7%      7%     0 B (0%)       no change
+105   metube               -        -       -      -              skipped (stopped)
+
+Total reclaimed: 3.2 GB across 6 CTs   Elapsed: 0m 3s
+```
+
+`Status` is `OK`, `no change`, `nothing to clean`, `skipped (stopped)`, `error`,
+or `dry-run` under `--dry` - a failed `pct exec`/`df` always shows as `error`,
+never as a clean row. Sizes come from `df -Pk /` inside each CT (POSIX, so
+Alpine busybox works too); a CT that grew during the run is clamped to `0 B`.
+`Before`/`After`/`Freed` are `-` for skipped CTs and `After`/`Freed` are `-` on
+a dry run, which reports no total reclaimed.
+
 **Safety rules baked in:**
 - Never `rm -rf` the pnpm store (hardlinked into live `node_modules`) - only `pnpm store prune`.
 - Never touches app/data dirs (e.g. `/opt/immich/cache/clip`) - caches only.
