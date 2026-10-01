@@ -39,8 +39,16 @@ DRY=0
 [ "${1:-}" = "--dry" ] && DRY=1
 
 # Clear the screen first, but ONLY on a real TTY so piped/redirected logs stay
-# escape-free. \033[H\033[2J homes + clears, \033[3J also wipes the scrollback.
-[ -t 1 ] && printf '\033[H\033[2J\033[3J'
+# escape-free. Let terminfo pick the sequence (`tput`, then `clear`), and fall
+# back to raw ANSI when neither can work -- e.g. TERM unset or `dumb`, which is
+# exactly what a non-interactive ssh session gives us. Every probe is silenced so
+# a failing lookup can never write to stderr. Straight to stdout rather than
+# captured in $(...), because command substitution makes bash complain about
+# the newlines some terminfo entries emit.
+if [ -t 1 ]; then
+  tput clear 2>/dev/null || clear 2>/dev/null || printf '\033[H\033[2J'
+  printf '\033[3J'    # also wipe scrollback, where the terminal supports it
+fi
 
 # Run header, so a saved log is never mistaken for a live run.
 NOW=$(date '+%Y-%m-%d %H:%M:%S')
