@@ -74,13 +74,23 @@ The **summary table** closes the run out:
 
 ```
 Summary
-CTID  Name                 Found    Before  After  Freed          Status
-100   immich               apt npm  14%     13%    208.0 MB (1%)  OK
-102   a-very-long-ct-name  apt      7%      7%     0 B (0%)       no change
-105   metube               -        -       -      -              skipped (stopped)
++======+=====================+=========+========+=======+===============+===================+
+| CTID | Name                | Found   | Before | After |         Freed | Status            |
++======+=====================+=========+========+=======+===============+===================+
+| 100  | immich              | npm apt |    14% |   14% | 117.2 MB (0%) | OK                |
++------+---------------------+---------+--------+-------+---------------+-------------------+
+| 102  | a-very-long-ct-name | apt     |    14% |   14% |      0 B (0%) | no change         |
++------+---------------------+---------+--------+-------+---------------+-------------------+
+| 105  | metube              | -       |      - |     - |             - | skipped (stopped) |
++======+=====================+=========+========+=======+===============+===================+
 
 Total reclaimed: 3.2 GB across 6 CTs   Elapsed: 0m 3s
 ```
+
+Columns are sized from the header and every cell, so a long CT name or a long
+tool list widens just its own column and every rule stays exactly as wide as the
+rows above and below it. `CTID`, `Name`, `Found` and `Status` are left-aligned;
+`Before`, `After` and `Freed` are right-aligned so the magnitudes line up.
 
 `Status` is `OK`, `no change`, `nothing to clean`, `skipped (stopped)`, `error`,
 or `dry-run` under `--dry` - a failed `pct exec`/`df` always shows as `error`,
