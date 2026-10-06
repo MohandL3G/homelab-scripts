@@ -7,10 +7,15 @@
 #
 #   dry run:  bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)" _ --dry
 #   real run: bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)"
+#   full run: bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/clean-lxc-caches.sh)" _ --logs --autoremove
 #
-# Options (in any order, both optional):
-#   --dry       report only, change nothing
-#   --verbose   also stream the per-CT detail as each CT is processed
+# Options (in any order, all optional):
+#   --dry           report only, change nothing
+#   --verbose       also stream the per-CT detail as each CT is processed
+#   --logs[=SIZE]   also vacuum the systemd journal down to SIZE (default 100M)
+#                   per CT; only acts if journalctl exists in that CT
+#   --autoremove    also `apt-get -y --purge autoremove` in apt-based CTs
+#                   (run once with --verbose first to audit what it would remove)
 #
 # The leading "_" is a throwaway $0 so the options land in $1.
 #
@@ -19,16 +24,22 @@
 #     on (via `pct list`). Add/remove/rename CTs freely — nothing here needs
 #     updating for that.
 #   - For each CT, checks what's actually installed inside it (pnpm / npm /
-#     uv / apt-get) before doing anything, and prints what it found. A CT
-#     without a given tool never has that tool's command run against it.
+#     uv / apt-get / journalctl) before doing anything, and prints what it
+#     found. A CT without a given tool never has that tool's command run
+#     against it.
 #
 # What it can clean inside a CT, if present:
 #   - pnpm store (via `pnpm store prune` — NEVER rm -rf; hardlinked into node_modules)
 #   - pnpm cache dir, npm cacache, yarn v6 cache
 #   - uv pip cache
-#   - apt archive cache (apt-get clean only — no autoremove / dist-upgrade)
+#   - apt archive cache (apt-get clean only — no autoremove / dist-upgrade
+#     unless --autoremove is passed)
+#   - systemd journal (journalctl --vacuum-size, only with --logs; keeps the
+#     newest SIZE so recent history survives)
 #
-# It NEVER touches application/data directories (e.g. /opt/immich/cache/clip).
+# It NEVER touches application/data directories (e.g. /opt/immich/cache/clip),
+# NEVER touches /tmp (running services keep in-use files there), and never
+# blanket-deletes /var/log — only the journal vacuum above runs against logs.
 #
 # Output: clears the terminal when stdout is a TTY (never when piped/redirected),
 # then prints a "=== LXC cache cleanup — <timestamp> ===" run header, then a
@@ -43,23 +54,41 @@ set -uo pipefail
 
 DRY=0
 VERBOSE=0
+LOGS=0
+JSIZE=100M
+AUTOREMOVE=0
+usage() {
+  echo "usage: clean-lxc-caches.sh [--dry] [--verbose] [--logs[=SIZE]] [--autoremove]"
+  echo "  --dry           report only, change nothing"
+  echo "  --verbose       also stream per-CT detail while running"
+  echo "  --logs[=SIZE]   also vacuum the systemd journal to SIZE (default 100M)"
+  echo "  --autoremove    also apt-get --purge autoremove in apt-based CTs"
+}
 for arg in "$@"; do
   case "$arg" in
     --dry)     DRY=1 ;;
     --verbose) VERBOSE=1 ;;
+    --autoremove) AUTOREMOVE=1 ;;
+    --logs)    LOGS=1 ;;
+    --logs=*)  LOGS=1; JSIZE="${arg#--logs=}" ;;
     -h|--help)
-      echo "usage: clean-lxc-caches.sh [--dry] [--verbose]"
-      echo "  --dry       report only, change nothing"
-      echo "  --verbose   also stream per-CT detail while running"
+      usage
       exit 0
       ;;
     *)
       echo "clean-lxc-caches.sh: unknown option: $arg" >&2
-      echo "usage: clean-lxc-caches.sh [--dry] [--verbose]" >&2
+      usage >&2
       exit 2
       ;;
   esac
 done
+
+# journalctl --vacuum-size accepts plain bytes or a K/M/G/T suffix — reject
+# anything else up front rather than failing once per CT inside the loop.
+if [ "$LOGS" -eq 1 ] && ! printf '%s' "$JSIZE" | grep -Eq '^[0-9]+[KMGT]?$'; then
+  echo "clean-lxc-caches.sh: invalid --logs size: $JSIZE (use e.g. 50M, 100M, 1G)" >&2
+  exit 2
+fi
 
 # Clear the screen first, but ONLY on a real TTY so piped/redirected logs stay
 # escape-free. Let terminfo pick the sequence (`tput`, then `clear`), and fall
@@ -75,10 +104,14 @@ fi
 
 # Run header, so a saved log is never mistaken for a live run.
 NOW=$(date '+%Y-%m-%d %H:%M:%S')
+FLAGS=''
+[ "$LOGS" -eq 1 ]       && FLAGS="$FLAGS --logs=$JSIZE"
+[ "$AUTOREMOVE" -eq 1 ] && FLAGS="$FLAGS --autoremove"
+[ "$VERBOSE" -eq 1 ]    && FLAGS="$FLAGS --verbose"
 if [ $DRY -eq 1 ]; then
-  printf '=== LXC cache cleanup (DRY RUN — nothing will be changed) — %s ===\n\n' "$NOW"
+  printf '=== LXC cache cleanup (DRY RUN — nothing will be changed)%s — %s ===\n\n' "$FLAGS" "$NOW"
 else
-  printf '=== LXC cache cleanup — %s ===\n\n' "$NOW"
+  printf '=== LXC cache cleanup%s — %s ===\n\n' "$FLAGS" "$NOW"
 fi
 
 mapfile -t CTLIST < <(pct list 2>/dev/null | awk 'NR>1 && $2=="running"{print $1}')
@@ -98,6 +131,7 @@ DETECT='
   [ -d /root/.npm/_cacache ]          && found+=("npm-dir")
   [ -d /usr/local/share/.cache/yarn ] && found+=("yarn-dir")
   { is apt-get && [ -d /var/cache/apt/archives ]; } && found+=("apt")
+  is journalctl && [ -d /var/log/journal ] && found+=("journal")
   [ "${#found[@]}" -eq 0 ] && echo NONE || echo "${found[*]}"
 '
 
@@ -117,8 +151,11 @@ progress_clear() { [ "$PROGRESS" -eq 1 ] && printf '\r\033[K'; return 0; }
 
 # Run the in-CT cleanup. Output is swallowed by the caller unless --verbose; the
 # body already silences each command, so this only stops unexpected chatter.
+# Host-side flags travel as positional args ($1=LOGS $2=JSIZE $3=AUTOREMOVE) —
+# the heredoc stays quoted so nothing expands on the host.
 cleanup_ct() {
-  pct exec "$1" -- bash -s <<'REMOTE'
+  pct exec "$1" -- bash -s -- "$LOGS" "$JSIZE" "$AUTOREMOVE" <<'REMOTE'
+    LOGS=${1:-0}; JSIZE=${2:-100M}; AUTOREMOVE=${3:-0}
     is(){ command -v "$1" >/dev/null 2>&1; }
     is pnpm && pnpm store prune 2>/dev/null || true
     is npm  && npm cache clean --force 2>/dev/null || true
@@ -127,6 +164,15 @@ cleanup_ct() {
     [ -d /root/.npm/_cacache ]          && rm -rf /root/.npm/_cacache
     [ -d /usr/local/share/.cache/yarn ] && rm -rf /usr/local/share/.cache/yarn
     { command -v apt-get >/dev/null 2>&1 && [ -d /var/cache/apt/archives ]; } && apt-get clean 2>/dev/null
+    # opt-in: purge orphaned packages (auto-marked; see --autoremove docs)
+    if [ "$AUTOREMOVE" -eq 1 ] && command -v apt-get >/dev/null 2>&1 && [ -d /var/cache/apt/archives ]; then
+      DEBIAN_FRONTEND=noninteractive apt-get -y --purge autoremove 2>&1 || true
+    fi
+    # opt-in: vacuum the journal to JSIZE, keeping the newest SIZE of history.
+    # journald-managed — never rm -rf'd, so the daemon keeps a consistent view.
+    if [ "$LOGS" -eq 1 ] && command -v journalctl >/dev/null 2>&1 && [ -d /var/log/journal ]; then
+      journalctl --vacuum-size="$JSIZE" 2>&1 || true
+    fi
 REMOTE
 }
 
@@ -183,7 +229,7 @@ for v in "${CTLIST[@]}"; do
   fi
 
   if [ "$found" = "NONE" ]; then
-    say "   nothing to clean (no pnpm/npm/uv/apt-get found)"
+    say "   nothing to clean (no pnpm/npm/uv/apt-get/journalctl found)"
     sum_row "$v" "$cname" 'none' '-' '-' '-' 'nothing to clean'
     continue
   fi
@@ -200,6 +246,14 @@ for v in "${CTLIST[@]}"; do
 
   if [ $DRY -eq 1 ]; then
     say "   (dry) would prune; currently used: $b_pct"
+    if [ "$LOGS" -eq 1 ]; then
+      if pct exec "$v" -- test -d /var/log/journal >/dev/null 2>&1; then
+        say "   (dry) journal: $(pct exec "$v" -- journalctl --disk-usage 2>/dev/null | tr -d '\r\n')  -> vacuum to $JSIZE"
+      else
+        say "   (dry) no persistent journal (skipping --logs here)"
+      fi
+    fi
+    [ "$AUTOREMOVE" -eq 1 ] && say "   (dry) would run: apt-get -y --purge autoremove"
     sum_row "$v" "$cname" "$found" "$b_pct" '-' '-' 'dry-run'
     continue
   fi
