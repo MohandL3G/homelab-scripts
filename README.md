@@ -11,6 +11,7 @@ One top-level folder per **target system / category** - nothing flat at root:
 | Folder              | Target                     |
 |---------------------|----------------------------|
 | `ProxmoxVE/`        | PVE hosts & LXC containers |
+| `Antigravity/`      | Antigravity agent & skills (CT 103) |
 
 Future systems get their own sibling folders (e.g. `Windows/`, `Cloudflare/`,
 `GitHub/`) with the same per-folder README/script-doc approach.
@@ -111,3 +112,64 @@ they regrow on the next 03:00 update. A scheduled prune would burn ~constant
 CPU/IO every night for a one-time size win. Leave it manual: run when a CT
 approaches its rootfs waterline. If you later want automation, prefer a weekly
 low-priority pass over a hook inside the (read-only) update pipeline.
+
+### `Antigravity/update-skills.sh`
+
+Checks for updates across git-cloned agent skill repositories on CT 103, fast-forwards
+to latest releases, syncs all skills into Antigravity (`~/.gemini/config/skills`), and
+updates homelab knowledge in Supermemory. Run inside CT 103 as root.
+
+```bash
+# dry run - checks upstream and reports status, changes nothing
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-skills.sh)" _ --dry
+
+# real run
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-skills.sh)"
+
+# real run with verbose git output
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-skills.sh)" _ --verbose
+
+# force resync of all skills even if git is already up to date
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-skills.sh)" _ --force
+```
+
+Or execute directly from a local clone:
+
+```bash
+./Antigravity/update-skills.sh [--dry] [--verbose] [--force]
+```
+
+The leading `_` is a throwaway `$0` so options land in `$1` when invoked via `bash -c`.
+
+**Options:**
+- `--dry`, `-n`: Check and report updates only; make no changes
+- `--verbose`, `-v`: Stream git fetch/pull commands and detailed output
+- `--force`, `-f`: Force reinstall/resync all skills even if git is up to date
+- `--no-supermemory`: Skip updating Supermemory memory after sync
+- `--repos-dir=PATH`: Directory containing skill repos (default: `/root/antigravity`)
+- `--dest-dir=PATH`: Target skills directory (default: `~/.gemini/config/skills`)
+
+The **summary table** reports the status of each discovered skill repository:
+
+```
+Summary
++=================+=========+==========+========+========+============+
+| Repository      | Current | Upstream | Behind | Skills | Status     |
++=================+=========+==========+========+========+============+
+| artcraft-skills | v1.2.0  | v1.3.0   |      3 |  17/17 | updated    |
++-----------------+---------+----------+--------+--------+------------+
+| rust-skills     | 5c40d3a | 5c40d3a  |      0 |  38/38 | up-to-date |
++-----------------+---------+----------+--------+--------+------------+
+
+Result: Skills successfully updated: artcraft-skills (v1.3.0, 17 skills)
+Supermemory: updated (namespace: repo_root__de0b3628254df1e4)
+Elapsed: 30s
+```
+
+**Features and safety:**
+- Auto-discovers any git repo under `/root/antigravity` containing skills.
+- Pulls only via `git pull --ff-only` to ensure clean upstream fast-forwards.
+- Re-scans skill directories after pull so brand-new skills added in an upstream release (e.g. `materialcraft`, `texturecraft`, `solidcraft`) are automatically detected and synced.
+- Syncs to both Antigravity's active skills directory (`~/.gemini/config/skills`) and `~/.agents/skills` when present.
+- Updates Supermemory's homelab namespace (`repo_root__de0b3628254df1e4`) automatically by forgetting previous skill-version memories and indexing the updated state.
+
