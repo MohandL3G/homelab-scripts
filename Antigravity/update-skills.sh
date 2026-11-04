@@ -129,6 +129,7 @@ mkdir -p "$DEST_DIR"
 declare -a ROWS=()
 ANY_UPDATED=false
 UPDATED_DETAILS=()
+UPDATED_REPOS=()
 
 for repo_path in "$REPOS_DIR"/*; do
   [ -d "$repo_path/.git" ] || continue
@@ -177,7 +178,7 @@ for repo_path in "$REPOS_DIR"/*; do
   installed_count=0
   for sdir in "${skill_dirs[@]}"; do
     sname=$(basename "$sdir")
-    if [ -d "$DEST_DIR/$sname" ]; then
+    if [ -d "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ]; then
       installed_count=$((installed_count + 1))
     fi
   done
@@ -220,19 +221,26 @@ for repo_path in "$REPOS_DIR"/*; do
         sname=$(basename "$sdir")
         should_sync=false
 
-        if [ "$repo_name" = "artcraft-skills" ] || [ "$total_repo_skills" -le 25 ]; then
+        if [ "$repo_name" = "artcraft-skills" ]; then
           should_sync=true
-        elif [ -e "$DEST_DIR/$sname" ]; then
+        elif [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ]; then
           should_sync=true
         fi
 
         if [ "$should_sync" = true ]; then
-          rm -rf "$DEST_DIR/$sname"
-          cp -R "$sdir" "$DEST_DIR/$sname"
+          if [ -L "$DEST_DIR/$sname" ]; then
+            # Preserve symlink; refresh target link without overwriting with copied folder
+            ln -sfn "$sdir" "$DEST_DIR/$sname"
+          else
+            rm -rf "$DEST_DIR/$sname"
+            cp -R "$sdir" "$DEST_DIR/$sname"
+          fi
           skills_synced=$((skills_synced + 1))
           
-          # Also sync to ~/.agents/skills if the folder already exists there
-          if [ -d "${HOME:-/root}/.agents/skills/$sname" ]; then
+          # Also sync to ~/.agents/skills if the folder or symlink already exists there
+          if [ -L "${HOME:-/root}/.agents/skills/$sname" ]; then
+            ln -sfn "$sdir" "${HOME:-/root}/.agents/skills/$sname"
+          elif [ -d "${HOME:-/root}/.agents/skills/$sname" ]; then
             rm -rf "${HOME:-/root}/.agents/skills/$sname"
             cp -R "$sdir" "${HOME:-/root}/.agents/skills/$sname"
           fi
@@ -247,6 +255,7 @@ for repo_path in "$REPOS_DIR"/*; do
       ANY_UPDATED=true
       report_skills="$skills_synced/$total_repo_skills"
       UPDATED_DETAILS+=("$repo_name ($ver_after, $skills_synced skills)")
+      UPDATED_REPOS+=("$repo_name|$repo_path|$ver_after")
     fi
   else
     # Up to date
@@ -272,34 +281,38 @@ if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_SUPERMEMORY" = true ] && [ "$DRY_RUN"
       echo "Updating Supermemory memory for namespace: $SUPERMEMORY_NS..."
     fi
 
-    # Find and forget older artcraft skills memories
-    old_ids=$(supermemory search "ArtCraft skills in /root/antigravity/artcraft-skills updated" --namespace "$SUPERMEMORY_NS" --mode memories --limit 3 --json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
-    
-    if [ -n "$old_ids" ]; then
-      for mid in $old_ids; do
-        supermemory forget "$mid" --namespace "$SUPERMEMORY_NS" >/dev/null 2>&1 || true
-      done
-    fi
+    for repo_entry in "${UPDATED_REPOS[@]}"; do
+      IFS='|' read -r rname rpath rver <<< "$repo_entry"
 
-    # Count total active ArtCraft skills
-    artcraft_skills=()
-    if [ -d "$REPOS_DIR/artcraft-skills" ]; then
-      for sk in "$REPOS_DIR/artcraft-skills"/*/SKILL.md; do
+      # Find and forget older skills memories for this repo
+      old_ids=$(supermemory search "skills in $rpath updated" --namespace "$SUPERMEMORY_NS" --mode memories --limit 3 --json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
+      if [ -z "$old_ids" ] && [ "$rname" = "artcraft-skills" ]; then
+        old_ids=$(supermemory search "ArtCraft skills in $rpath updated" --namespace "$SUPERMEMORY_NS" --mode memories --limit 3 --json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
+      fi
+      if [ -n "$old_ids" ]; then
+        for mid in $old_ids; do
+          supermemory forget "$mid" --namespace "$SUPERMEMORY_NS" >/dev/null 2>&1 || true
+        done
+      fi
+
+      # Discover active installed skills for this repo
+      repo_active=()
+      for sk in "$rpath"/*/SKILL.md "$rpath"/skills/*/SKILL.md; do
         [ -f "$sk" ] || continue
-        artcraft_skills+=("$(basename "$(dirname "$sk")")")
+        sn=$(basename "$(dirname "$sk")")
+        [ "$sn" = "skills" ] && continue
+        if [ -e "$DEST_DIR/$sn" ] || [ -L "$DEST_DIR/$sn" ]; then
+          repo_active+=("$sn")
+        fi
       done
-    fi
-    artcraft_count=${#artcraft_skills[@]}
-    artcraft_list=$(IFS=', '; echo "${artcraft_skills[*]}")
-    artcraft_tag=$(git -C "$REPOS_DIR/artcraft-skills" describe --tags --abbrev=0 HEAD 2>/dev/null || echo "latest")
+      active_count=${#repo_active[@]}
+      active_list=$(IFS=', '; echo "${repo_active[*]}")
 
-    mem_text="ArtCraft skills in $REPOS_DIR/artcraft-skills updated to release $artcraft_tag. All $artcraft_count skills are installed and active in $DEST_DIR: $artcraft_list. Auto-updated via update-skills.sh."
+      mem_text="Skills from $rname ($rver) updated in $rpath. Active in $DEST_DIR ($active_count skills): $active_list. Auto-updated via update-skills.sh."
+      supermemory add "$mem_text" --namespace "$SUPERMEMORY_NS" --dreaming instant >/dev/null 2>&1 || true
+    done
 
-    if supermemory add "$mem_text" --namespace "$SUPERMEMORY_NS" --dreaming instant >/dev/null 2>&1; then
-      supermemory_status="updated"
-    else
-      supermemory_status="add-failed"
-    fi
+    supermemory_status="updated"
   else
     supermemory_status="cli-not-found"
   fi
