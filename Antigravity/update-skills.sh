@@ -146,9 +146,9 @@ for repo_path in "$REPOS_DIR"/*; do
   
   # Fetch upstream quietly unless verbose
   if [ "$VERBOSE" = true ]; then
-    git -C "$repo_path" fetch origin "$branch"
+    git -C "$repo_path" fetch origin "$branch" --tags
   else
-    git -C "$repo_path" fetch origin "$branch" --quiet 2>/dev/null || true
+    git -C "$repo_path" fetch origin "$branch" --tags --quiet 2>/dev/null || true
   fi
 
   upstream="origin/$branch"
@@ -197,9 +197,9 @@ for repo_path in "$REPOS_DIR"/*; do
       # Perform git pull
       if [ "$behind_count" -gt 0 ]; then
         if [ "$VERBOSE" = true ]; then
-          git -C "$repo_path" pull --ff-only origin "$branch"
+          git -C "$repo_path" pull --ff-only origin "$branch" --tags
         else
-          git -C "$repo_path" pull --ff-only origin "$branch" --quiet
+          git -C "$repo_path" pull --ff-only origin "$branch" --tags --quiet
         fi
       fi
 
