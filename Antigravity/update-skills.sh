@@ -126,6 +126,13 @@ fi
 
 mkdir -p "$DEST_DIR"
 
+discover_skills_in_repo() {
+  local rpath="$1"
+  find "$rpath" -type f -name "SKILL.md" -not -path "*/.*/*" -exec dirname {} + 2>/dev/null | while read -r d; do
+    [ "$(basename "$d")" = "skills" ] || echo "$d"
+  done | sort -u
+}
+
 declare -a ROWS=()
 ANY_UPDATED=false
 UPDATED_DETAILS=()
@@ -164,13 +171,9 @@ for repo_path in "$REPOS_DIR"/*; do
 
   # Discover all skill folders in repo
   skill_dirs=()
-  for skill_file in "$repo_path"/*/SKILL.md "$repo_path"/skills/*/SKILL.md; do
-    [ -f "$skill_file" ] || continue
-    sdir=$(dirname "$skill_file")
-    sname=$(basename "$sdir")
-    [ "$sname" = "skills" ] && continue
-    skill_dirs+=("$sdir")
-  done
+  while IFS= read -r sdir; do
+    [ -n "$sdir" ] && skill_dirs+=("$sdir")
+  done < <(discover_skills_in_repo "$repo_path")
 
   total_repo_skills=${#skill_dirs[@]}
 
@@ -178,7 +181,7 @@ for repo_path in "$REPOS_DIR"/*; do
   installed_count=0
   for sdir in "${skill_dirs[@]}"; do
     sname=$(basename "$sdir")
-    if [ -d "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ]; then
+    if [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ] || [ -e "/root/home/.agents/skills/$sname" ] || [ -L "/root/home/.agents/skills/$sname" ]; then
       installed_count=$((installed_count + 1))
     fi
   done
@@ -207,13 +210,9 @@ for repo_path in "$REPOS_DIR"/*; do
 
       # Re-discover in case new skills were added in this release
       skill_dirs=()
-      for skill_file in "$repo_path"/*/SKILL.md "$repo_path"/skills/*/SKILL.md; do
-        [ -f "$skill_file" ] || continue
-        sdir=$(dirname "$skill_file")
-        sname=$(basename "$sdir")
-        [ "$sname" = "skills" ] && continue
-        skill_dirs+=("$sdir")
-      done
+      while IFS= read -r sdir; do
+        [ -n "$sdir" ] && skill_dirs+=("$sdir")
+      done < <(discover_skills_in_repo "$repo_path")
       total_repo_skills=${#skill_dirs[@]}
 
       # Sync skills
@@ -221,9 +220,9 @@ for repo_path in "$REPOS_DIR"/*; do
         sname=$(basename "$sdir")
         should_sync=false
 
-        if [ "$repo_name" = "artcraft-skills" ]; then
+        if [ "$repo_name" = "artcraft-skills" ] || [ "$repo_name" = "homelab-scripts" ]; then
           should_sync=true
-        elif [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ]; then
+        elif [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ] || [ -e "/root/home/.agents/skills/$sname" ] || [ -L "/root/home/.agents/skills/$sname" ]; then
           should_sync=true
         fi
 
@@ -237,13 +236,16 @@ for repo_path in "$REPOS_DIR"/*; do
           fi
           skills_synced=$((skills_synced + 1))
           
-          # Also sync to ~/.agents/skills if the folder or symlink already exists there
-          if [ -L "${HOME:-/root}/.agents/skills/$sname" ]; then
-            ln -sfn "$sdir" "${HOME:-/root}/.agents/skills/$sname"
-          elif [ -d "${HOME:-/root}/.agents/skills/$sname" ]; then
-            rm -rf "${HOME:-/root}/.agents/skills/$sname"
-            cp -R "$sdir" "${HOME:-/root}/.agents/skills/$sname"
-          fi
+          # Also sync to workspace ~/.agents/skills and /root/home/.agents/skills
+          for wdir in "/root/home/.agents/skills" "${HOME:-/root}/.agents/skills"; do
+            [ -d "$wdir" ] || continue
+            if [ -L "$wdir/$sname" ]; then
+              ln -sfn "$sdir" "$wdir/$sname"
+            elif [ -d "$wdir/$sname" ] || [ "$repo_name" = "homelab-scripts" ]; then
+              rm -rf "$wdir/$sname"
+              cp -R "$sdir" "$wdir/$sname"
+            fi
+          done
         fi
       done
 
@@ -297,14 +299,13 @@ if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_SUPERMEMORY" = true ] && [ "$DRY_RUN"
 
       # Discover active installed skills for this repo
       repo_active=()
-      for sk in "$rpath"/*/SKILL.md "$rpath"/skills/*/SKILL.md; do
-        [ -f "$sk" ] || continue
-        sn=$(basename "$(dirname "$sk")")
-        [ "$sn" = "skills" ] && continue
-        if [ -e "$DEST_DIR/$sn" ] || [ -L "$DEST_DIR/$sn" ]; then
+      while IFS= read -r sk; do
+        [ -z "$sk" ] && continue
+        sn=$(basename "$sk")
+        if [ -e "$DEST_DIR/$sn" ] || [ -L "$DEST_DIR/$sn" ] || [ -e "/root/home/.agents/skills/$sn" ] || [ -L "/root/home/.agents/skills/$sn" ]; then
           repo_active+=("$sn")
         fi
-      done
+      done < <(discover_skills_in_repo "$rpath")
       active_count=${#repo_active[@]}
       active_list=$(IFS=', '; echo "${repo_active[*]}")
 
