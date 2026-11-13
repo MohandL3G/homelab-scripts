@@ -5,7 +5,7 @@ description: Procedures for Proxmox VE host and LXC container work - ssh pve acc
 
 # PVE Operations
 
-Environment facts (per-CT details, IPs, storage layout, migration state) live in Supermemory, not in this skill. Before assuming any homelab fact, search Supermemory (`supermemory_recall` / supermemory search). If a search returns nothing relevant, say so rather than guessing.
+Environment facts (per-CT details, IPs, storage layout, migration state) live in Anchor (note `[Homelab] PVE Infrastructure & Container Map`), not in this skill. Before assuming any homelab fact, search Anchor (`anchor.py memory search` / `anchor.py get`). If a search returns nothing relevant, say so rather than guessing.
 
 ## Access rules
 
@@ -18,21 +18,21 @@ Environment facts (per-CT details, IPs, storage layout, migration state) live in
 If anything looks mismatched or odd versus expected state:
 
 1. Run `ssh pve 'pct list'` (and `pct config <id>`) FIRST to see whether a CT was added or changed.
-2. On finding a new/changed guest, update Supermemory yourself: forget the stale memory, add the corrected one. No near-duplicates.
+2. On finding a new/changed guest, update Anchor yourself: update `[Homelab] PVE Infrastructure & Container Map` using `anchor.py memory append` or `anchor.py update`.
 3. Ask the user whether the change needs further updates (NPM proxy, DNS) before acting.
 
 ## CT ID safety
 
 - Before ANY destructive operation, reconcile the requested CT ID against live `pct list` - user-provided IDs may be off-by-one or typos. Treat the confirmation as referring to the pending or only candidate, and report the corrected ID.
 - Never `pct destroy`, stop, or restart a CT without explicit user confirmation for that specific action.
-- Backups: PBS is a separate CT (see Supermemory for current state). `vzdump` only when the user asks.
+- Backups: PBS is a separate CT (see Anchor for current state). `vzdump` only when the user asks.
 
 ## Common recipes
 
 - Enter a CT: `ssh pve 'pct exec <id> -- <command>'`
 - Status / config: `ssh pve 'pct status <id>'` / `ssh pve 'pct config <id>'`
 - Service inside a CT: `ssh pve 'pct exec <id> -- systemctl status <svc>'`
-- List storages: `ssh pve 'pvesm status'` (layout details in Supermemory)
+- List storages: `ssh pve 'pvesm status'` (layout details in Anchor)
 - Start/stop only with user confirmation: `pct start <id>` / `pct stop <id>`
 
 ### CT 103 (`antigravity`) Daemon Management
@@ -49,4 +49,4 @@ If anything looks mismatched or odd versus expected state:
   - `ssh pve 'pct exec 103 -- systemctl --user -M root@ restart antigravity-cli-daemon'`
   - `ssh pve 'pct exec 103 -- systemctl --user -M root@ status antigravity-cli-daemon'`
 
-After any environment change, update Supermemory yourself - do not ask the user to maintain it.
+After any environment change, update Anchor yourself - do not ask the user to maintain it.

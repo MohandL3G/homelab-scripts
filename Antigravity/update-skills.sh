@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # update-skills.sh — Check for updates to git-cloned agent skills, pull latest
-# releases, sync skills into Antigravity, and update Supermemory.
+# releases, sync skills into Antigravity, and update Anchor persistent memory.
 #
 # Run inside CT 103 (Antigravity guest) as root, or invoked straight from GitHub raw:
 #
@@ -13,7 +13,9 @@
 #   --dry, -n          Report available updates without pulling or copying files
 #   --verbose, -v      Stream git fetch/pull commands and detailed output
 #   --force, -f        Force reinstall/resync all skills even if git is up to date
-#   --no-supermemory   Skip updating Supermemory memory after successful sync
+#   --no-anchor        Skip updating Anchor persistent memory after successful sync
+#   --no-memory        Alias for --no-anchor
+#   --no-supermemory   (Deprecated) Alias for --no-anchor
 #   --repos-dir=DIR    Override directory containing cloned repos (default: /root/antigravity)
 #   --dest-dir=DIR     Override destination skills directory (default: ~/.gemini/config/skills)
 #   --help, -h         Show this help message
@@ -25,8 +27,8 @@
 #   - Detects remote updates via `git fetch origin`
 #   - Fast-forwards tracking branch (`git pull --ff-only`)
 #   - Auto-discovers all `SKILL.md` folders and safely syncs them into Antigravity
-#   - Automatically updates Supermemory homelab namespace (repo_root__de0b3628254df1e4)
-#     with new version tags and installed skill sets
+#   - Automatically updates Anchor persistent memory note
+#     ([Memory] Installed Agent Skills & External Repositories) with new version tags and installed skill sets
 #   - Renders a clean ASCII summary table with dynamic column sizing
 #
 set -euo pipefail
@@ -37,10 +39,11 @@ set -euo pipefail
 DRY_RUN=false
 VERBOSE=false
 FORCE=false
-UPDATE_SUPERMEMORY=true
+UPDATE_ANCHOR=true
 REPOS_DIR="/root/antigravity"
 DEST_DIR="${HOME:-/root}/.gemini/config/skills"
-SUPERMEMORY_NS="repo_root__de0b3628254df1e4"
+ANCHOR_PY="/root/home/.agents/skills/anchor/scripts/anchor.py"
+ANCHOR_NOTE="[Memory] Installed Agent Skills & External Repositories"
 
 usage() {
   cat <<'EOF'
@@ -50,7 +53,9 @@ Options:
   --dry, -n           Check and report updates only; make no changes
   --verbose, -v       Show detailed git output and sync actions
   --force, -f         Force resync skills into destination even if up to date
-  --no-supermemory    Skip updating Supermemory even if skills are updated
+  --no-anchor         Skip updating Anchor memory even if skills are updated
+  --no-memory         Alias for --no-anchor
+  --no-supermemory    (Deprecated) Same as --no-anchor
   --repos-dir=PATH    Directory containing skill repos (default: /root/antigravity)
   --dest-dir=PATH     Target skills directory (default: ~/.gemini/config/skills)
   -h, --help          Show this help message
@@ -77,8 +82,8 @@ while [ $# -gt 0 ]; do
       FORCE=true
       shift
       ;;
-    --no-supermemory)
-      UPDATE_SUPERMEMORY=false
+    --no-anchor|--no-memory|--no-supermemory)
+      UPDATE_ANCHOR=false
       shift
       ;;
     --repos-dir=*)
@@ -274,28 +279,18 @@ if [ -t 1 ] && [ "$VERBOSE" = false ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Supermemory Memory Update (if updates applied)
+# Anchor Memory Update (if updates applied)
 # -----------------------------------------------------------------------------
-supermemory_status="skipped"
-if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_SUPERMEMORY" = true ] && [ "$DRY_RUN" = false ]; then
-  if command -v supermemory >/dev/null 2>&1; then
+anchor_status="skipped"
+if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_ANCHOR" = true ] && [ "$DRY_RUN" = false ]; then
+  if [ -f "$ANCHOR_PY" ]; then
     if [ "$VERBOSE" = true ]; then
-      echo "Updating Supermemory memory for namespace: $SUPERMEMORY_NS..."
+      echo "Updating Anchor memory note: $ANCHOR_NOTE..."
     fi
 
+    timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
     for repo_entry in "${UPDATED_REPOS[@]}"; do
       IFS='|' read -r rname rpath rver <<< "$repo_entry"
-
-      # Find and forget older skills memories for this repo
-      old_ids=$(supermemory search "skills in $rpath updated" --namespace "$SUPERMEMORY_NS" --mode memories --limit 3 --json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
-      if [ -z "$old_ids" ] && [ "$rname" = "artcraft-skills" ]; then
-        old_ids=$(supermemory search "ArtCraft skills in $rpath updated" --namespace "$SUPERMEMORY_NS" --mode memories --limit 3 --json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
-      fi
-      if [ -n "$old_ids" ]; then
-        for mid in $old_ids; do
-          supermemory forget "$mid" --namespace "$SUPERMEMORY_NS" >/dev/null 2>&1 || true
-        done
-      fi
 
       # Discover active installed skills for this repo
       repo_active=()
@@ -309,13 +304,13 @@ if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_SUPERMEMORY" = true ] && [ "$DRY_RUN"
       active_count=${#repo_active[@]}
       active_list=$(IFS=', '; echo "${repo_active[*]}")
 
-      mem_text="Skills from $rname ($rver) updated in $rpath. Active in $DEST_DIR ($active_count skills): $active_list. Auto-updated via update-skills.sh."
-      supermemory add "$mem_text" --namespace "$SUPERMEMORY_NS" --dreaming instant >/dev/null 2>&1 || true
+      mem_entry="[$timestamp] Skills from $rname ($rver) updated in $rpath. Active in $DEST_DIR ($active_count skills): $active_list."
+      python3 "$ANCHOR_PY" memory append "$ANCHOR_NOTE" --content "- $mem_entry" >/dev/null 2>&1 || true
     done
 
-    supermemory_status="updated"
+    anchor_status="updated"
   else
-    supermemory_status="cli-not-found"
+    anchor_status="anchor-cli-not-found"
   fi
 fi
 
@@ -393,8 +388,8 @@ ELAPSED=$((END_TIME - START_TIME))
 echo ""
 if [ "$ANY_UPDATED" = true ]; then
   echo "Result: Skills successfully updated: $(IFS='; '; echo "${UPDATED_DETAILS[*]}")"
-  if [ "$UPDATE_SUPERMEMORY" = true ]; then
-    echo "Supermemory: $supermemory_status (namespace: $SUPERMEMORY_NS)"
+  if [ "$UPDATE_ANCHOR" = true ]; then
+    echo "Anchor: $anchor_status (Note: $ANCHOR_NOTE)"
   fi
 else
   if [ "$DRY_RUN" = true ]; then

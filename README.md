@@ -145,7 +145,7 @@ The leading `_` is a throwaway `$0` so options land in `$1` when invoked via `ba
 - `--dry`, `-n`: Check and report updates only; make no changes
 - `--verbose`, `-v`: Stream git fetch/pull commands and detailed output
 - `--force`, `-f`: Force reinstall/resync all skills even if git is up to date
-- `--no-supermemory`: Skip updating Supermemory memory after sync
+- `--no-anchor`, `--no-memory`: Skip updating Anchor memory after sync (`--no-supermemory` supported as legacy alias)
 - `--repos-dir=PATH`: Directory containing skill repos (default: `/root/antigravity`)
 - `--dest-dir=PATH`: Target skills directory (default: `~/.gemini/config/skills`)
 
@@ -162,7 +162,7 @@ Summary
 +-----------------+---------+----------+--------+--------+------------+
 
 Result: Skills successfully updated: artcraft-skills (v1.3.0, 17 skills)
-Supermemory: updated (namespace: repo_root__de0b3628254df1e4)
+Anchor: updated (Note: [Memory] Installed Agent Skills & External Repositories)
 Elapsed: 30s
 ```
 
@@ -172,4 +172,31 @@ Elapsed: 30s
 - Re-scans skill directories after pull so brand-new skills added in an upstream release (e.g. `materialcraft`, `texturecraft`, `solidcraft`) are automatically detected and synced.
 - Syncs to both Antigravity's active skills directory (`~/.gemini/config/skills`) and `~/.agents/skills` when present.
 - Updates Supermemory's homelab namespace (`repo_root__de0b3628254df1e4`) automatically by forgetting previous skill-version memories and indexing the updated state.
+
+### `Antigravity/skills/gmail/scripts/gmail.py`
+
+CLI and client library for interacting with Mohand's Gmail account via encrypted IMAP SSL (`imap.gmail.com:993`) and SMTP STARTTLS (`smtp.gmail.com:587`). Runs inside CT 103 and exposes subcommands for folder inspection, message searches, full email reading, drafting, and guarded sending.
+
+```bash
+# List all mailbox folders
+python3 Antigravity/skills/gmail/scripts/gmail.py folders
+
+# Search emails (latest 5 in INBOX)
+python3 Antigravity/skills/gmail/scripts/gmail.py search --limit 5
+
+# Search unread emails
+python3 Antigravity/skills/gmail/scripts/gmail.py search --query "UNSEEN"
+
+# Read email by UID with header and decoded body breakdown
+python3 Antigravity/skills/gmail/scripts/gmail.py read <UID>
+
+# Create a draft in [Gmail]/Drafts
+python3 Antigravity/skills/gmail/scripts/gmail.py draft --to "user@example.com" --subject "Meeting" --body "Draft notes"
+
+# Send email immediately (requires explicit --confirmed flag)
+python3 Antigravity/skills/gmail/scripts/gmail.py send --to "user@example.com" --subject "Meeting" --body "Hello" --confirmed
+```
+
+Credentials are read automatically from `/root/.env` (`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD`).
+
 
