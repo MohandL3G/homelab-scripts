@@ -136,25 +136,48 @@ EOF
 ### Explorer & Desktop Auto-Refresh Failure (F5 Glitch Triage)
 - **Symptom:** Files created or deleted in Explorer or Desktop do not update automatically; deleted files linger as "ghost" icons giving "Item Not Found" errors on second deletion; manual F5 or folder refresh is required.
 - **Root Cause:**
-  1. **Dead Network Mountpoints (`MountPoints2`):** Offline or defunct network/SMB/RaiDrive shares in `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2` cause background thread pool worker stalls on 21-second TCP timeouts.
-  2. **Net Crawling Active:** When `NoNetCrawling` is disabled (default `0`), Explorer aggressively polls all cached network destinations.
-  3. **Unified Process Contention:** `SeparateProcess = 0` forces Desktop and folder windows into a single process, serializing shell change notifications (`SHChangeNotify`) behind stalled network queries.
-  4. **Orphaned JumpList Locks:** Stale `~RF*.TMP` lock files in `AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations`.
+  1. **`BagMRU` & `Bags` Registry Saturation (Primary Engine Lock):** Windows hardcodes a default limit of 5,000 folder view entries in `BagMRU`. When `BagMRU` exceeds 5,000 items (e.g. 5,119 MRU and 16,140 Bags), Explorer's view engine exhausts its allocation table and refuses to commit new view updates or refresh dynamically.
+  2. **`sihost.exe` (Shell Infrastructure Host) Broker Hang:** `sihost.exe` hosts the background Shell notification broker. Merely restarting `explorer.exe` re-attaches to the same stalled `sihost.exe` broker; `sihost.exe` must be cycled alongside `explorer.exe`.
+  3. **Dead Network Mountpoints (`MountPoints2`):** Offline or defunct network/SMB/RaiDrive shares in `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2` cause background thread pool worker stalls on 21-second TCP timeouts.
+  4. **Net Crawling Active:** When `NoNetCrawling` is disabled (default `0`), Explorer aggressively polls all cached network destinations.
+  5. **Unified Process Contention:** `SeparateProcess = 0` forces Desktop and folder windows into a single process, serializing shell change notifications (`SHChangeNotify`) behind stalled network queries.
+  6. **Orphaned JumpList Locks & Stale Icon Cache:** Stale `~RF*.TMP` lock files in `CustomDestinations` and bloated multi-megabyte `iconcache*.db` databases.
 - **Permanent Remediation Recipe:**
 ```powershell
-# 1. Disable Net Crawling and Isolate Desktop Process
+# 1. Stop Explorer and Shell Infrastructure Host
+Stop-Process -Name explorer, sihost -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+# 2. Disable Net Crawling and Isolate Desktop Process
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "NoNetCrawling" -Value 1 -Type DWord -Force
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SeparateProcess" -Value 1 -Type DWord -Force
 
-# 2. Purge dead network mountpoints in MountPoints2
+# 3. Purge saturated Bags & BagMRU and increase limit to 20,000
+@(
+    "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags",
+    "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\BagMRU",
+    "HKCU:\Software\Microsoft\Windows\Shell\Bags",
+    "HKCU:\Software\Microsoft\Windows\Shell\BagMRU"
+) | ForEach-Object { if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue } }
+
+Set-ItemProperty "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell" -Name "BagMRU Size" -Value 20000 -Type DWord -Force
+Set-ItemProperty "HKCU:\Software\Microsoft\Windows\Shell" -Name "BagMRU Size" -Value 20000 -Type DWord -Force
+
+# 4. Purge dead network mountpoints in MountPoints2 & clear MRU
 Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2" |
     Where-Object { $_.PSChildName -like "##*" } |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Map Network Drive MRU" -Recurse -Force -ErrorAction SilentlyContinue
 
-# 3. Clean orphaned JumpList lock files & restart Explorer
+# 5. Clean orphaned JumpList lock files & icon caches
 Get-ChildItem "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations" -Filter "*~RF*.TMP" |
     Remove-Item -Force -ErrorAction SilentlyContinue
-Stop-Process -Name explorer -Force
+Get-ChildItem "$env:LOCALAPPDATA\Microsoft\Windows\Explorer" -Filter "*cache*.db" |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:LOCALAPPDATA\IconCache.db" -Force -ErrorAction SilentlyContinue
+
+# 6. Relaunch Explorer (sihost relaunches automatically)
+Start-Process "explorer.exe"
 ```
 
 ---
