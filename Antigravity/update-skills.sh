@@ -133,7 +133,7 @@ mkdir -p "$DEST_DIR"
 
 discover_skills_in_repo() {
   local rpath="$1"
-  find "$rpath" -type f -name "SKILL.md" -not -path "*/.*/*" -exec dirname {} + 2>/dev/null | while read -r d; do
+  find -L "$rpath" -type f -name "SKILL.md" -not -path "*/.*/*" -exec dirname {} + 2>/dev/null | while read -r d; do
     [ "$(basename "$d")" = "skills" ] || echo "$d"
   done | sort -u
 }
@@ -232,7 +232,13 @@ for repo_path in "$REPOS_DIR"/*; do
         fi
 
         if [ "$should_sync" = true ]; then
-          if [ -L "$DEST_DIR/$sname" ]; then
+          target_sdir=$(realpath "$sdir")
+
+          if [ "$repo_name" = "homelab-scripts" ]; then
+            # In-house skills: always symlink directly to canonical repo to eliminate drift
+            rm -rf "$DEST_DIR/$sname"
+            ln -sfn "$target_sdir" "$DEST_DIR/$sname"
+          elif [ -L "$DEST_DIR/$sname" ]; then
             # Preserve symlink; refresh target link without overwriting with copied folder
             ln -sfn "$sdir" "$DEST_DIR/$sname"
           else
@@ -244,9 +250,13 @@ for repo_path in "$REPOS_DIR"/*; do
           # Also sync to workspace ~/.agents/skills and /root/home/.agents/skills
           for wdir in "/root/home/.agents/skills" "${HOME:-/root}/.agents/skills"; do
             [ -d "$wdir" ] || continue
-            if [ -L "$wdir/$sname" ]; then
+            if [ "$repo_name" = "homelab-scripts" ]; then
+              # In-house skills: workspace directory points directly to git repo
+              rm -rf "$wdir/$sname"
+              ln -sfn "$target_sdir" "$wdir/$sname"
+            elif [ -L "$wdir/$sname" ]; then
               ln -sfn "$sdir" "$wdir/$sname"
-            elif [ -d "$wdir/$sname" ] || [ "$repo_name" = "homelab-scripts" ]; then
+            elif [ -d "$wdir/$sname" ]; then
               rm -rf "$wdir/$sname"
               cp -R "$sdir" "$wdir/$sname"
             fi
