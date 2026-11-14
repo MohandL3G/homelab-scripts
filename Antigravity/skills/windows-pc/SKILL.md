@@ -166,6 +166,15 @@ if (-not (Test-Path $bgRefresh)) { New-Item -Path $bgRefresh -Force | Out-Null }
 Set-ItemProperty $bgRefresh -Name "Enabled" -Value 1 -Type DWord -Force
 Set-ItemProperty $bgRefresh -Name "AlwaysRefresh" -Value 1 -Type DWord -Force
 
+# Ensure Shell CLSID Instance DontRefresh handler is 0
+@(
+    "HKLM:\SOFTWARE\Classes\CLSID\{BDEADE7F-C265-11D0-BCED-00A0C90AB50F}\Instance",
+    "HKLM:\SOFTWARE\Classes\Wow6432Node\CLSID\{BDEADE7F-C265-11D0-BCED-00A0C90AB50F}\Instance"
+) | ForEach-Object {
+    if (-not (Test-Path $_)) { New-Item -Path $_ -Force | Out-Null }
+    Set-ItemProperty -Path $_ -Name "DontRefresh" -Value 0 -Type DWord -Force
+}
+
 # 3. Purge saturated Bags & BagMRU and increase limit to 20,000
 @(
     "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags",
