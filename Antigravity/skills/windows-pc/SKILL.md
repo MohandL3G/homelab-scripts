@@ -12,8 +12,12 @@ The workstation is Windows 11 IoT Enterprise (Build 26300.9818 x86_64, `MOHANDL3
 ## 1. Access & Remote Execution Harness
 
 ### SSH Connection
-- Target: `ssh gamingpc` (`MohandL3G@192.168.0.50`, Windows 11 IoT Enterprise, PowerShell 7.6.9).
+- Target: `ssh gamingpc` (`MohandL3G@192.168.0.50`, Windows 11 IoT Enterprise, PowerShell 7.7.0).
 - OpenSSH Server is active and authenticated via public key.
+- **Admin Key Requirement:** Windows OpenSSH redirects admin users (`MohandL3G`) to `C:\ProgramData\ssh\administrators_authorized_keys` with strict ACLs (`icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"`).
+- **Default Shell Gotcha (Store Updates):**
+  When PowerShell updates via WindowsApps, the physical path changes. If `HKLM:\SOFTWARE\OpenSSH\DefaultShell` points to an old binary, OpenSSH rejects all logins with `User not allowed because shell does not exist`.
+  *Fix:* `Set-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value (Get-Process -Id $PID).Path -Force; Restart-Service sshd`.
 
 ### Mandatory Remote Execution Pattern: Stdin Heredoc
 Passing inline PowerShell strings over SSH often causes remote quote-stripping and premature variable expansion (e.g. bash or remote pwsh expanding `$_` into nothingness or syntax errors).
@@ -45,6 +49,7 @@ EOF
 - **RAM**: 32 GB DDR4-3200 dual-channel (2x 16 GB in slots `DDR4-A1` and `DDR4-B1`).
 - **Storage**: 2 TB Kingston NV3 PCIe 4.0 NVMe SSD (`KINGSTON SNV3S2000G`), `C:\` partition ~1.82 TiB NTFS.
 - **Power Scheme**: `Ultimate Performance` scheme active (`e9a42b02-d5df-448d-aa00-03f14749eb61`).
+- **Power Supply & APC UPS Advisory**: Connected to an APC UPS with a degraded/dead battery pending replacement. Sudden mains cuts or voltage dips immediately cut power to the PC, logging Event ID 41 (Kernel-Power) with `BugcheckCode = 0`, `PowerButtonTimestamp = 0`, and no minidump (hardware/GPU did not crash).
 - **Memory Integrity (HVCI)**: Disabled in `HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity` for 1% low gaming frametimes. Hyper-V and WSL2 remain fully enabled (`hypervisorlaunchtype = Auto`).
 
 ---
@@ -62,6 +67,13 @@ EOF
 
 ### `C:\Data` (User Data & Storage)
 - Contains user folders: `Backups`, `DaVinci`, `EpicGames`, `HyperV`, `WSL2`, `Ventoy.vhdx`, and emulation/game tables (`Bloodborne bbport 1.09 v2.1.CT`).
+
+### Rclone UI & Cloudreve Synchronization
+- **Application**: Rclone UI (`C:\Program Files\Rclone UI\Rclone UI.exe`), background sync client to Cloudreve on CT 100.
+- **Internal Managed Engine**: Self-contained runtime under `C:\Users\MohandL3G\AppData\Local\com.rclone.ui\rclone-versions\v1.76.0\rclone.exe` (auto-update active).
+- **CLI in PATH**: User PATH contains `C:\Users\MohandL3G\AppData\Local\com.rclone.ui\bin`, exposing the managed `rclone.exe` to PowerShell without needing an external package.
+- **Standalone Policy**: Do not install standalone `Rclone.Rclone` from WinGet/UniGetUI; Rclone UI handles both the GUI daemon and terminal CLI natively.
+- **Scheduled Sync Tasks** (Windows Task Scheduler folder `\RcloneUI\`): Automated hourly syncs for `BloodbornePC`, `Bloodborne`, `LuaTools`, and `SignalBackups` targeting Cloudreve.
 
 ---
 
