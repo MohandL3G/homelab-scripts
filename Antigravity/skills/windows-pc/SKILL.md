@@ -141,16 +141,30 @@ EOF
   3. **Dead Network Mountpoints (`MountPoints2`):** Offline or defunct network/SMB/RaiDrive shares in `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2` cause background thread pool worker stalls on 21-second TCP timeouts.
   4. **Net Crawling Active:** When `NoNetCrawling` is disabled (default `0`), Explorer aggressively polls all cached network destinations.
   5. **Unified Process Contention:** `SeparateProcess = 0` forces Desktop and folder windows into a single process, serializing shell change notifications (`SHChangeNotify`) behind stalled network queries.
-  6. **Orphaned JumpList Locks & Stale Icon Cache:** Stale `~RF*.TMP` lock files in `CustomDestinations` and bloated multi-megabyte `iconcache*.db` databases.
+  6. **Active Desktop Policy Suppression (`NoActiveDesktopChanges`):** If `HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoActiveDesktopChanges` is set to `1` (often injected by aggressive debloat/privacy scripts), Windows explicitly restricts dynamic changes to the desktop shell.
+  7. **Windows 11 Navigation Pane View Listener Detachment:** In Windows 11 23H2/24H2, leaving `NavPaneExpandToCurrentFolder` unset causes Explorer's view notification sink to disconnect from directory updates. Setting `NavPaneExpandToCurrentFolder = 1` forces active synchronization between the folder view and shell broker.
+  8. **Orphaned JumpList Locks & Stale Icon Cache:** Stale `~RF*.TMP` lock files in `CustomDestinations` and bloated multi-megabyte `iconcache*.db` databases.
 - **Permanent Remediation Recipe:**
 ```powershell
 # 1. Stop Explorer and Shell Infrastructure Host
 Stop-Process -Name explorer, sihost -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-# 2. Disable Net Crawling and Isolate Desktop Process
+# 2. Disable Net Crawling, Isolate Process, and Fix Policy Flags
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "NoNetCrawling" -Value 1 -Type DWord -Force
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SeparateProcess" -Value 1 -Type DWord -Force
+Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "NavPaneExpandToCurrentFolder" -Value 1 -Type DWord -Force
+
+# Clear restrictive policy if present
+if (Test-Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer") {
+    Set-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoActiveDesktopChanges" -Value 0 -Type DWord -Force
+}
+
+# Force Background Refresh flags
+$bgRefresh = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Background\Refresh"
+if (-not (Test-Path $bgRefresh)) { New-Item -Path $bgRefresh -Force | Out-Null }
+Set-ItemProperty $bgRefresh -Name "Enabled" -Value 1 -Type DWord -Force
+Set-ItemProperty $bgRefresh -Name "AlwaysRefresh" -Value 1 -Type DWord -Force
 
 # 3. Purge saturated Bags & BagMRU and increase limit to 20,000
 @(
