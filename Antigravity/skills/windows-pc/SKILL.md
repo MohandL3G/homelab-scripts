@@ -133,6 +133,30 @@ EOF
 ```
 *Rule*: Gigabyte software (`EasyTune`, `@BIOS`, `GigabyteUpdateService`, `AppCenter`) and Intel XTU are removed. If `GigabyteUpdateService` ever reappears, disable "Gigabyte Utilities Downloader Configuration" in the UEFI BIOS settings.
 
+### Explorer & Desktop Auto-Refresh Failure (F5 Glitch Triage)
+- **Symptom:** Files created or deleted in Explorer or Desktop do not update automatically; deleted files linger as "ghost" icons giving "Item Not Found" errors on second deletion; manual F5 or folder refresh is required.
+- **Root Cause:**
+  1. **Dead Network Mountpoints (`MountPoints2`):** Offline or defunct network/SMB/RaiDrive shares in `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2` cause background thread pool worker stalls on 21-second TCP timeouts.
+  2. **Net Crawling Active:** When `NoNetCrawling` is disabled (default `0`), Explorer aggressively polls all cached network destinations.
+  3. **Unified Process Contention:** `SeparateProcess = 0` forces Desktop and folder windows into a single process, serializing shell change notifications (`SHChangeNotify`) behind stalled network queries.
+  4. **Orphaned JumpList Locks:** Stale `~RF*.TMP` lock files in `AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations`.
+- **Permanent Remediation Recipe:**
+```powershell
+# 1. Disable Net Crawling and Isolate Desktop Process
+Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "NoNetCrawling" -Value 1 -Type DWord -Force
+Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "SeparateProcess" -Value 1 -Type DWord -Force
+
+# 2. Purge dead network mountpoints in MountPoints2
+Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2" |
+    Where-Object { $_.PSChildName -like "##*" } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+# 3. Clean orphaned JumpList lock files & restart Explorer
+Get-ChildItem "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations" -Filter "*~RF*.TMP" |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+Stop-Process -Name explorer -Force
+```
+
 ---
 
 ## 5. WSL & SSH Key Quirks
