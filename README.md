@@ -173,6 +173,50 @@ Elapsed: 30s
 - Syncs to both Antigravity's active skills directory (`~/.gemini/config/skills`) and `~/.agents/skills` when present.
 - Updates Supermemory's homelab namespace (`repo_root__de0b3628254df1e4`) automatically by forgetting previous skill-version memories and indexing the updated state.
 
+### `Antigravity/update-agy.sh`
+
+Automates updating the Antigravity CLI (`agy`) inside CT 103 by retrieving the release archive from the Gaming PC (`MOHANDL3G-PC`) over local Gigabit LAN, verifying SHA-512 integrity against Google's official release manifest, atomically installing the binary into `/root/.local/bin/agy`, and cleaning up temporary files on both hosts.
+
+```bash
+# Dry run — detect archive on Gaming PC and verify manifest without installing
+./Antigravity/update-agy.sh --dry
+
+# Real run — auto-discovers archive on Desktop (or ABDM Downloads) and installs
+./Antigravity/update-agy.sh
+
+# Real run with detailed transfer and verification logs
+./Antigravity/update-agy.sh --verbose
+
+# Update using a specific archive file path on Gaming PC
+./Antigravity/update-agy.sh --file='C:\Users\MohandL3G\Desktop\agy_cli_linux_x64.tar.gz'
+```
+
+**Options:**
+- `--dry`, `-n`: Check upstream manifest and inspect remote Gaming PC files; make no changes
+- `--verbose`, `-v`: Stream scp transfer progress and detailed verification output
+- `--force`, `-f`: Force reinstall even if installed version matches upstream
+- `--file=PATH`: Specify explicit remote path on Gaming PC (skips auto-scan)
+- `--no-cleanup`: Retain temporary extraction staging and remote archive
+- `--no-anchor`: Skip recording the update in Anchor persistent memory
+- `--no-restart`: Skip restarting the remote-control daemon
+- `--restart`: Force daemon restart even if executed inside an active agent session
+
+The **summary table** reports the update result:
+
+```
+Summary
++=======================+==========+===========+=========+
+| Component             | Previous | Installed | Status  |
++=======================+==========+===========+=========+
+| Antigravity CLI (agy) | 1.5.7    | 1.5.10    | updated |
++=======================+==========+===========+=========+
+
+Result: Antigravity CLI successfully updated to 1.5.10.
+Daemon: deferred (active session)
+Anchor: updated (Note: [Changelog] Homelab Events Archive)
+Elapsed: 15s
+```
+
 ### `Antigravity/skills/gmail/scripts/gmail.py`
 
 CLI and client library for interacting with Mohand's Gmail account via encrypted IMAP SSL (`imap.gmail.com:993`) and SMTP STARTTLS (`smtp.gmail.com:587`). Runs inside CT 103 and exposes subcommands for folder inspection, message searches, full email reading, drafting, and guarded sending.
