@@ -487,7 +487,7 @@ if [ "$UPDATE_ANCHOR" = true ]; then
 EOF
 )
 
-    if python3 "$ANCHOR_PY" memory append "$ANCHOR_NOTE_ID" <<< "$anchor_entry" >/dev/null 2>&1; then
+    if python3 "$ANCHOR_PY" memory append "$ANCHOR_NOTE_ID" --content "$anchor_entry" >/dev/null 2>&1; then
       anchor_status="updated"
     else
       anchor_status="append-failed"
