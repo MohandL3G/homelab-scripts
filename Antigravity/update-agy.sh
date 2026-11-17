@@ -591,4 +591,9 @@ echo "Daemon: $daemon_status"
 if [ "$UPDATE_ANCHOR" = true ]; then
   echo "Anchor: $anchor_status (Note: $ANCHOR_NOTE)"
 fi
+echo ""
+echo "Note: To reload the remote-control daemon into the new version:"
+echo "  systemctl --user restart antigravity-cli-daemon.service"
+echo "  # or: agy remote-control stop && agy remote-control start"
+echo ""
 echo "Elapsed: ${ELAPSED}s"

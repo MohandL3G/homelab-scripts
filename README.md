@@ -214,6 +214,11 @@ Summary
 Result: Antigravity CLI successfully updated to 1.5.10.
 Daemon: deferred (active session)
 Anchor: updated (Note: [Changelog] Homelab Events Archive)
+
+Note: To reload the remote-control daemon into the new version:
+  systemctl --user restart antigravity-cli-daemon.service
+  # or: agy remote-control stop && agy remote-control start
+
 Elapsed: 15s
 ```
 
