@@ -7,9 +7,12 @@
 #
 # Run inside CT 103 (Antigravity guest) as root, or invoked straight from GitHub raw:
 #
-#   dry run:  bash /root/home/homelab-scripts/Antigravity/update-agy.sh --dry
-#   real run: bash /root/home/homelab-scripts/Antigravity/update-agy.sh
-#   force:    bash /root/home/homelab-scripts/Antigravity/update-agy.sh --force
+#   dry run:  bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --dry
+#   real run: bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)"
+#   verbose:  bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --verbose
+#   force:    bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --force
+#
+# The leading "_" is a throwaway $0 so the options land in $1 when invoked via bash -c.
 #
 # Options (in any order, all optional):
 #   --dry, -n          Report available updates and detect remote file without downloading or installing
@@ -93,8 +96,16 @@ EOF
   exit 0
 }
 
+# Handle cases where bash -c is invoked without a throwaway $0 (e.g. bash -c "..." --dry)
+if [[ "${0:-}" == -* ]]; then
+  set -- "$0" "$@"
+fi
+
 while [ $# -gt 0 ]; do
   case "$1" in
+    _)
+      shift
+      ;;
     --dry|-n)
       DRY_RUN=true
       shift

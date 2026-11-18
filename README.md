@@ -178,18 +178,26 @@ Elapsed: 30s
 Automates updating the Antigravity CLI (`agy`) inside CT 103 by retrieving the release archive from the Gaming PC (`MOHANDL3G-PC`) over local Gigabit LAN, verifying SHA-512 integrity against Google's official release manifest, atomically installing the binary into `/root/.local/bin/agy`, and cleaning up temporary files on both hosts.
 
 ```bash
-# Dry run — detect archive on Gaming PC and verify manifest without installing
-./Antigravity/update-agy.sh --dry
+# dry run — checks upstream manifest and inspects Gaming PC without installing
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --dry
 
-# Real run — auto-discovers archive on Desktop (or ABDM Downloads) and installs
-./Antigravity/update-agy.sh
+# real run — auto-discovers archive on Desktop (or ABDM Downloads) and installs
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)"
 
-# Real run with detailed transfer and verification logs
-./Antigravity/update-agy.sh --verbose
+# real run with detailed transfer and verification logs
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --verbose
 
-# Update using a specific archive file path on Gaming PC
-./Antigravity/update-agy.sh --file='C:\Users\MohandL3G\Desktop\agy_cli_linux_x64.tar.gz'
+# update using a specific archive file path on Gaming PC
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/Antigravity/update-agy.sh)" _ --file='C:\Users\MohandL3G\Desktop\agy_cli_linux_x64.tar.gz'
 ```
+
+Or execute directly from a local clone:
+
+```bash
+./Antigravity/update-agy.sh [--dry] [--verbose] [--force]
+```
+
+The leading `_` is a throwaway `$0` so options land in `$1` when invoked via `bash -c`.
 
 **Options:**
 - `--dry`, `-n`: Check upstream manifest and inspect remote Gaming PC files; make no changes
