@@ -91,18 +91,26 @@ ssh gamingpc "nvidia-smi"
 ssh gamingpc "nvidia-smi -q" | grep -A 4 "BAR1 Memory Usage"
 ```
 
-### Crash Dump & BSOD Triage
+### Crash Dump, LiveKernelReports & Black Screen Triage
 ```bash
 ssh gamingpc 'pwsh -NoProfile -' << 'EOF'
-# Check kernel minidumps and application crash dumps
+# Check kernel minidumps, user crash dumps, and GPU watchdog live dumps
 Get-ChildItem C:\Windows\Minidump -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime
 Get-ChildItem "$env:LOCALAPPDATA\CrashDumps" -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime
+Get-ChildItem C:\Windows\LiveKernelReports\WATCHDOG -File -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime
 
 # Query recent Windows Error Reporting (WER) system crash events
 Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WER-SystemErrorReporting'} -MaxEvents 5 -ErrorAction SilentlyContinue |
     Select-Object TimeCreated, Message | Format-List
 EOF
 ```
+- **Black Screen / LiveKernelDump `0x1A8` & `0x141` Triage**:
+  * **`0x1A8` (`VIDEO_DXGKRNL_BLACK_SCREEN_LIVEDUMP`, P1=`0xA`)**: Occurs when Windows detects a connected physical display but graphics mode-set fails or the GPU enters `NV_ERR_GPU_IS_LOST`. DWM crashes with `0xc00001ad`.
+  * **Remediation**:
+    1. Issue `Restart-Computer -Force` over SSH to power-cycle the PCIe bus and cold-boot GPU firmware.
+    2. Disable PCIe Link State Power Management (ASPM):
+       `powercfg /setacvalueindex SCHEME_CURRENT SUB_PCIEXPRESS ee12f906-d277-404b-b6da-e5fa1a576df5 0; powercfg /setactive SCHEME_CURRENT`
+    3. If recurring on high refresh rates (1440p @ 180Hz), fallback monitor refresh rate to 165Hz/144Hz or set PCIe generation in UEFI BIOS to Gen 3 to eliminate bus jitter.
 
 ### Network Adapter & Link Speed Check
 The physical network adapter is a Realtek PCIe GbE Family Controller:
