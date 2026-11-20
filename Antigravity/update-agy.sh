@@ -47,6 +47,7 @@ DRY_RUN=false
 VERBOSE=false
 FORCE=false
 CLEANUP=true
+BACKUP=true
 UPDATE_ANCHOR=true
 AUTO_RESTART=true
 EXPLICIT_RESTART=false
@@ -77,6 +78,7 @@ Options:
   --verbose, -v      Show detailed transfer, verification, and command outputs
   --force, -f        Force reinstall even if current version is already up to date
   --file=PATH        Specify exact file path on Gaming PC (skips Desktop auto-scan)
+  --no-backup        Skip creating rollback backup (default: keeps 1 rollback, prunes older)
   --no-cleanup       Retain temporary files in /tmp and on Gaming PC
   --no-anchor        Skip logging the update to Anchor persistent memory
   --no-restart       Do not restart the remote-control daemon after installing
@@ -120,6 +122,10 @@ while [ $# -gt 0 ]; do
       ;;
     --file=*)
       EXPLICIT_FILE="${1#*=}"
+      shift
+      ;;
+    --no-backup)
+      BACKUP=false
       shift
       ;;
     --no-cleanup)
@@ -345,7 +351,11 @@ if [ "$DRY_RUN" = true ]; then
   fi
   echo "  3. Extract 'antigravity' binary into '$STAGING_DIR'"
   echo "  4. Stage and verify version matches '$TARGET_VER'"
-  echo "  5. Backup '$BINARY_PATH' to '$TARGET_DIR/agy.${INSTALLED_VER}.bak'"
+  if [ "$BACKUP" = true ]; then
+    echo "  5. Backup '$BINARY_PATH' to '$TARGET_DIR/agy.${INSTALLED_VER}.bak' (pruning older backups)"
+  else
+    echo "  5. Replace '$BINARY_PATH' without backup (--no-backup specified)"
+  fi
   echo "  6. Atomically replace '$BINARY_PATH' with new binary"
   echo "  7. Update '$STATUS_FILE'"
   if [ "$CLEANUP" = true ]; then
@@ -438,13 +448,23 @@ mkdir -p "$TARGET_DIR"
 cp -a "$EXTRACTED_BIN" "$TARGET_DIR/agy.new"
 chmod +x "$TARGET_DIR/agy.new"
 
-# Versioned backup
+# Versioned backup (retain only 1 rollback backup; prune older backups to prevent disk bloat)
 if [ -f "$BINARY_PATH" ]; then
-  BACKUP_PATH="$TARGET_DIR/agy.${INSTALLED_VER}.bak"
-  if [ "$VERBOSE" = true ]; then
-    echo "Creating backup of current binary at $BACKUP_PATH"
+  if [ "$BACKUP" = true ]; then
+    # Prune older agy backup binaries to prevent unbounded disk growth (~260MB each)
+    find "$TARGET_DIR" -maxdepth 1 -type f \( -name "agy.*.bak" -o -name "agy.bak" \) -delete 2>/dev/null || true
+
+    BACKUP_PATH="$TARGET_DIR/agy.${INSTALLED_VER}.bak"
+    if [ "$VERBOSE" = true ]; then
+      echo "Creating rollback backup of current binary at $BACKUP_PATH (older backups pruned)"
+    fi
+    mv -f "$BINARY_PATH" "$BACKUP_PATH"
+  else
+    if [ "$VERBOSE" = true ]; then
+      echo "Removing current binary without backup (--no-backup specified)"
+    fi
+    rm -f "$BINARY_PATH"
   fi
-  mv -f "$BINARY_PATH" "$BACKUP_PATH"
 fi
 
 # Atomic move
@@ -493,7 +513,7 @@ if [ "$UPDATE_ANCHOR" = true ]; then
 - **Update Method:** Automated local LAN transfer from Gaming PC (${REMOTE_HOST}) via \`update-agy.sh\`.
 - **Integrity:** SHA-512 checksum verified against Google auto-updater manifest.
 - **Previous Version:** ${INSTALLED_VER} -> **New Version:** ${FINAL_VER}
-- **Installation Path:** \`/root/.local/bin/agy\` (Rollback backup preserved: \`/root/.local/bin/agy.${INSTALLED_VER}.bak\`).
+- **Installation Path:** \`/root/.local/bin/agy\` (Rollback backup preserved: \`/root/.local/bin/agy.${INSTALLED_VER}.bak\`; older backups pruned).
 - **Hygiene:** Cleaned temporary extraction staging and purged source archive on Gaming PC Desktop (\`${REMOTE_FILE_PATH}\`).
 EOF
 )

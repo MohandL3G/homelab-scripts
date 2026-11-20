@@ -204,6 +204,7 @@ The leading `_` is a throwaway `$0` so options land in `$1` when invoked via `ba
 - `--verbose`, `-v`: Stream scp transfer progress and detailed verification output
 - `--force`, `-f`: Force reinstall even if installed version matches upstream
 - `--file=PATH`: Specify explicit remote path on Gaming PC (skips auto-scan)
+- `--no-backup`: Skip creating rollback backup (by default only the immediate previous backup is kept; older backups are automatically pruned)
 - `--no-cleanup`: Retain temporary extraction staging and remote archive
 - `--no-anchor`: Skip recording the update in Anchor persistent memory
 - `--no-restart`: Skip restarting the remote-control daemon
