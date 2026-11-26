@@ -113,6 +113,57 @@ CPU/IO every night for a one-time size win. Leave it manual: run when a CT
 approaches its rootfs waterline. If you later want automation, prefer a weekly
 low-priority pass over a hook inside the (read-only) update pipeline.
 
+### `ProxmoxVE/update-hawser.sh`
+
+Auto-discovers and updates Docker-based **Hawser** agents (`ghcr.io/finsys/hawser`)
+across running Proxmox VE LXC containers. Run on the PVE host as root, straight
+from the raw GitHub URL:
+
+```bash
+# dry run - discovers CTs and compares installed vs upstream version without modifying anything
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/update-hawser.sh)" _ --dry
+
+# real run - scans all running CTs and updates any outdated :latest Hawser agents
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/update-hawser.sh)"
+
+# targeted verbose run on specific CTs
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MohandL3G/homelab-scripts/main/ProxmoxVE/update-hawser.sh)" _ --ct=101,102 --verbose
+```
+
+The leading `_` is a throwaway `$0` so options land in `$1`.
+
+**Options:**
+- `--dry`, `-n`: Report installed vs upstream release without pulling or recreating containers
+- `--verbose`, `-v`: Stream per-CT inspection, pull, recreate, and health-check output
+- `--force`, `-f`: Re-pull and recreate even when installed version already matches upstream
+- `--ct=ID[,ID...]`: Restrict scan to specific comma-separated CT IDs (repeatable)
+- `--no-prune`: Keep the temporary `hawser-rollback:<old_ver>` image tag after verification
+- `-h`, `--help`: Show help message
+
+The **summary table** reports every scanned CT:
+
+```text
+Summary (upstream latest: 0.2.54)
++======+===================+=========+========+=======+=========+===================+
+| CTID | Name              | Mode    | Before | After | Health  | Status            |
++======+===================+=========+========+=======+=========+===================+
+| 100  | master            | -       |      - |     - | -       | no hawser         |
++------+-------------------+---------+--------+-------+---------+-------------------+
+| 101  | adguard           | direct  | 0.2.53 | 0.2.54| healthy | updated           |
++------+-------------------+---------+--------+-------+---------+-------------------+
+| 102  | nginxproxymanager | compose | 0.2.53 | 0.2.54| healthy | updated           |
++------+-------------------+---------+--------+-------+---------+-------------------+
+| 116  | opencode          | -       |      - |     - | -       | skipped (stopped) |
++======+===================+=========+========+=======+=========+===================+
+
+Updated: 2   Up-to-date: 0   Skipped: 2   Errors: 0   Elapsed: 0m 28s
+```
+
+**Safety rules baked in:**
+- Skips stopped CTs, CTs without Docker/Hawser, and containers pinned to non-`:latest` tags (e.g. `:0.2.53` or `@sha256:...`).
+- Handles both Compose-managed deployments (when a `docker-compose.yml` exists on disk) and standalone/direct containers (reconstructed from `docker inspect` using a temporary `0600` `--env-file` so `TOKEN` is never exposed in CLI arguments or output).
+- Tags the previous image as `hawser-rollback:<old_ver>` before recreating, verifies both Docker healthcheck and `/_hawser/health` (`"connected":true`), automatically rolls back on failure, and prunes the rollback tag once healthy (unless `--no-prune`).
+
 ### `Antigravity/update-skills.sh`
 
 Checks for updates across git-cloned agent skill repositories on CT 103, fast-forwards
