@@ -138,6 +138,27 @@ discover_skills_in_repo() {
   done | sort -u
 }
 
+skill_installed_for_repo() {
+  local sname="$1"
+  local repo_real="$2"
+  local repos_real
+  repos_real=$(realpath -m "$REPOS_DIR" 2>/dev/null || echo "$REPOS_DIR")
+
+  local check_path target
+  for check_path in "$DEST_DIR/$sname" "/root/home/.agents/skills/$sname"; do
+    if [ -L "$check_path" ]; then
+      target=$(realpath -m "$check_path" 2>/dev/null || true)
+      case "$target" in
+        "$repo_real"/*) return 0 ;;
+        "$repos_real"/*) return 1 ;;
+      esac
+    elif [ -e "$check_path" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 declare -a ROWS=()
 ANY_UPDATED=false
 UPDATED_DETAILS=()
@@ -183,10 +204,11 @@ for repo_path in "$REPOS_DIR"/*; do
   total_repo_skills=${#skill_dirs[@]}
 
   # Count currently installed skills
+  repo_real=$(realpath -m "$repo_path" 2>/dev/null || echo "$repo_path")
   installed_count=0
   for sdir in "${skill_dirs[@]}"; do
     sname=$(basename "$sdir")
-    if [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ] || [ -e "/root/home/.agents/skills/$sname" ] || [ -L "/root/home/.agents/skills/$sname" ]; then
+    if skill_installed_for_repo "$sname" "$repo_real"; then
       installed_count=$((installed_count + 1))
     fi
   done
@@ -227,7 +249,7 @@ for repo_path in "$REPOS_DIR"/*; do
 
         if [ "$repo_name" = "artcraft-skills" ] || [ "$repo_name" = "homelab-scripts" ]; then
           should_sync=true
-        elif [ -e "$DEST_DIR/$sname" ] || [ -L "$DEST_DIR/$sname" ] || [ -e "/root/home/.agents/skills/$sname" ] || [ -L "/root/home/.agents/skills/$sname" ]; then
+        elif skill_installed_for_repo "$sname" "$repo_real"; then
           should_sync=true
         fi
 
@@ -303,11 +325,12 @@ if [ "$ANY_UPDATED" = true ] && [ "$UPDATE_ANCHOR" = true ] && [ "$DRY_RUN" = fa
       IFS='|' read -r rname rpath rver <<< "$repo_entry"
 
       # Discover active installed skills for this repo
+      rpath_real=$(realpath -m "$rpath" 2>/dev/null || echo "$rpath")
       repo_active=()
       while IFS= read -r sk; do
         [ -z "$sk" ] && continue
         sn=$(basename "$sk")
-        if [ -e "$DEST_DIR/$sn" ] || [ -L "$DEST_DIR/$sn" ] || [ -e "/root/home/.agents/skills/$sn" ] || [ -L "/root/home/.agents/skills/$sn" ]; then
+        if skill_installed_for_repo "$sn" "$rpath_real"; then
           repo_active+=("$sn")
         fi
       done < <(discover_skills_in_repo "$rpath")
